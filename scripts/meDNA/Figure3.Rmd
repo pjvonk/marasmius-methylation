@@ -198,8 +198,6 @@ methylationData.3.QC <- read_csv(meData_path)
 
 ```
 
-
-
 #Figure 3
 
 Check that the mRNA and TE analysis are similar in terms of significant sites
@@ -207,48 +205,41 @@ Check that the mRNA and TE analysis are similar in terms of significant sites
 ###  TE analysis
 
 ```{r }
+# Filter methylation information on TE locations
 TEdf %>% 
   mutate(motifStart = as.numeric(motifStart)) %>%
   mutate(motifStop = as.numeric(motifStop)) %>%
   separate(TEclass, into=c("TEclass","nr"), sep = "-") ->
   TEdf
-TEdf %>%
-  group_by(TEclass) %>%
-  summarise(motifStart = min(motifStart), motifStop = max(motifStop)) %>%
-  arrange(-motifStop)  %>%
-  filter(motifStop>500) %>%
-  select(TEclass) %>%
-  inner_join(TEdf)->
-  TEdf.long
 
-TEdf.long %>% select(TEclass,seqid,TE_ID2) -> 
+# Extract TE info
+TEdf %>% select(TEclass,seqid,TE_ID2) -> 
   TE.info
 
-TE.info 
-  
-
-
+# inner join on TE_ID2
 methylationData.3.QC %>% 
   select(-TEclass) %>%
   filter(location == "TE") %>%
   inner_join(TE.info) ->
-  methylationData.3.QC.TE
+  methylationData.3.QC.TE ##5649 TEs
 ```
 
 
 ####PCA analysis
 
 ```{r }
+# Extract methylation percentage of all TEs per sample
 methylationData.3.QC.TE %>%
   group_by(TE_ID2,Location,Replicate2,Tissue) %>%
   summarise( percent = mean(percent)) ->
-  methylationData.3.QC.TE.summary
+  methylationData.3.QC.TE.summary 
 
-
+# extract by how many samples a TE is covered per Tissue
 methylationData.3.QC.TE.summary %>%
   group_by(TE_ID2,Tissue) %>%
   summarise(nrOfExamples = n()) -> methylationData.3.QC.TE.summary.2
 
+# Remove TEs that are not included in all 3 of a mushroom
 methylationData.3.QC.TE.summary.2 %>%
   group_by(Tissue) %>%
   summarise(n = max(nrOfExamples)) %>%
@@ -257,12 +248,9 @@ methylationData.3.QC.TE.summary.2 %>%
   summarise(n = n()) %>%
   filter(n == 3)  %>%
   select(TE_ID2)->
-  TE.covered
+  TE.covered ##5616 TEs
 
-
-TE.covered
-  
-
+# And remove TEs that are not covered by all samples
 methylationData.3.QC.TE.summary %>%
   inner_join(TE.covered) %>%
   pivot_wider(values_from = "percent",names_from = c("Location","Replicate2","Tissue")) %>%
@@ -270,181 +258,6 @@ methylationData.3.QC.TE.summary %>%
   drop_na()->                     # Removes any row with at least one NA->
   methylationData.3.QC.TE.wide
 
-
-## PCA analysis
-PCAresult = PCAtools::pca(methylationData.3.QC.TE.wide,center = TRUE)
-rot = PCAresult$rotated[,1:6]
-
-## Cluster analysis
-dist_matrix <- dist(rot, method = "euclidean")
-hc <- hclust(dist_matrix, method = "ward.D2")
-library(NbClust)
-nb <- NbClust(rot, distance="euclidean", min.nc=2, max.nc=10, method="ward.D2")
-nb$Best.nc
-
-
-wss <- numeric(10)
-for (k in 2:10) {
-  clusters <- cutree(hc, k)
-  wss[k] <- sum(sapply(unique(clusters), function(c) {
-    pts <- rot[clusters == c, ]
-    sum(scale(pts, scale=FALSE)^2)
-  }))
-}
-
-plot(1:10, wss, type="b", xlab="k", ylab="Within-cluster SS")
-
-
-## Variance
-PCA.stats = data.frame(variance = PCAresult$variance, 
-                       PC = factor(names(PCAresult$variance), levels = names(PCAresult$variance)))
-ggplot(PCA.stats, aes(x = PC, y = variance) )+
-  geom_bar(stat = "identity", fill = "skyblue", color = "black") +
-  theme_minimal() +
-  labs(
-    title = "PC variance",
-    x = "PC",
-    y = "Variance"
-  )+theme(
-    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),  # Rotate and adjust x-axis labels
-    axis.title.x = element_text(size = 12, face = "bold"),  # Format x-axis title
-    axis.title.y = element_text(size = 12, face = "bold")   # Format y-axis title
-  ) -> variation
-
-ggsave(here("figures","Figure3","TE.PCA.variance.plot.pdf"),
-       plot = variation, width = 10, height = 8, units = "in")
-
-
-methylationData.3.QC.TE %>%
-  group_by(Location,Replicate2,Tissue) %>%
-  summarise(n = n(),mean = mean(mean)) %>%
-  mutate(sampleID = paste(Location,Replicate2,Tissue, sep = "_")) ->
-  sampleInfo.TE.summary
-
-sampleInfo.TE.summary
-
-PCAresult$rotated  %>%
-  rownames_to_column(var = "sampleID") %>%
-  inner_join(sampleInfo.TE.summary) %>%
-  ggplot(aes(x = PC1, y = PC2, color =Tissue, shape = Location )) +
-  geom_point(size = 3, alpha = 0.7) + # Adjust point size
-  scale_shape_manual(values = c(16, 17, 15, 18)) + # Custom shapes
-  theme_minimal() +
-  scale_color_manual(values = colors) +
-  labs(
-    title = "Scatter Plot with Four Classes",
-    x = "PC1 (29 % variance)",
-    y = "PC2 (8.6 % variance )",
-    shape = "Class"
-  )-> PCA.plot
-
-
-  
-PCAresult$rotated  %>%
-  rownames_to_column(var = "sampleID") %>%
-  inner_join(sampleInfo.TE.summary)  %>%
-  ggplot(aes(x = PC1, y = PC2, color =Tissue, shape = Location,label =sampleID )) +
-  geom_point(size = 3, alpha = 0.7) + # Adjust point size
-  scale_shape_manual(values = c(16, 17, 15, 18)) + # Custom shapes
-  theme_minimal() +
-  scale_color_manual(values = colors) +
-  labs(
-    title = "Scatter Plot with Four Classes",
-    x = "PC1 (29 % variance)",
-    y = "PC2 (8.6 % variance )",
-    shape = "Class"
-  ) + geom_text_repel() -> PCA.plot.labels
-
-
-
-PCA.plot.labels
-
-
-breaks1 <- seq(from = -100, to = 300, length.out = 4)
-library(RColorBrewer)
-colors1 = colorRampPalette(rev(brewer.pal(n = 7, name =
-  "RdYlBu")))(4)
-myColor2 <-circlize::colorRamp2(breaks = breaks1,colors =colors1)
-
-
-library(ComplexHeatmap)
-
-pdf("~/MarasmiusMethylationRNA/figures/Figure3/TE.methylation.PCA.heatmap.pdf",
-    width = 8, height = 6)
-ComplexHeatmap::Heatmap(
-  PCAresult$rotated[1:3] ,
-  col = myColor2,
-  column_split = 6,
-  split = clusters,
-  cell_fun = function(j, i, x, y, width, height, fill) {
-    grid.rect(
-      x, y, width = width, height = height,
-      gp = gpar(col = "darkgrey", fill = NA, lwd = 1) # Add gray borders
-    )
-  }
-) 
-dev.off()
-
-
-png("~/MarasmiusMethylationRNA/figures/Figure3/TE.methylation.PCA.heatmap.png",
-    width = 1800, height = 1200)
-ComplexHeatmap::Heatmap(
-  PCAresult$rotated[1:3] ,
-  col = myColor2,
-  column_split = 6,
-  split = clusters,
-  cell_fun = function(j, i, x, y, width, height, fill) {
-    grid.rect(
-      x, y, width = width, height = height,
-      gp = gpar(col = "darkgrey", fill = NA, lwd = 1) # Add gray borders
-    )
-  }
-) 
-dev.off()
-
-
-# Determine the optimal number of clusters
-# Plot the dendrogram
-plot(hc, main = "Hierarchical Clustering Dendrogram", sub = "", xlab = "", ylab = "Height", hang = -1, cex = 0.6)
-
-# Cut the dendrogram into 3 clusters
-clusters <- cutree(hc, k = 2)
-
-# Add cluster assignments to the data frame
-rot$cluster <- as.factor(clusters)
-
-
-
-
-
- rot = rot %>% rownames_to_column("IDsample") 
- methylationData.3.QC.annotation.distribution %>% 
-    select(Tissue,Location,Replicate2,methylation,location) %>%
-      mutate(IDsample = paste(Location,Replicate2,Tissue,sep = "_")) %>%
-    inner_join(rot) %>%
-    pivot_wider(values_from = "methylation", names_from = "location" )  %>%
-    ggplot(aes(x = GeneBody, y = TE, shape = Tissue,color = cluster)) + geom_point()+
-    theme_light()+
-    geom_text_repel(aes(label = IDsample), color = "black") -> fig3B.clustered
-     
-
- PCAresult$rotated  %>%
-  rownames_to_column(var = "sampleID") %>%
-  inner_join(sampleInfo.TE.summary)  %>%
-  inner_join(rot) %>%
-  ggplot(aes(x = PC1, y = PC2, color =cluster, shape = Tissue,label =sampleID )) +
-  geom_point(size = 3, alpha = 0.7) + # Adjust point size
-  scale_shape_manual(values = c(16, 17, 15, 18)) + # Custom shapes
-  theme_minimal() +
-  labs(
-    title = "Scatter Plot with Four Classes",
-    x = "PC1 (29 % variance)",
-    y = "PC2 (8.6 % variance )",
-    shape = "Class"
-  ) +geom_text_repel(aes(label = sampleID), color = "black")  -> 
-  
-  PCA.plot.clustered
- PCA.plot.clustered
 ```
 
 
