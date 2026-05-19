@@ -11,61 +11,46 @@ date: "2024-09-11"
 
 # Setup
 ```{r setup, include=FALSE}
-#if (!require("BiocManager", quietly = TRUE))
-#    install.packages("BiocManager")
-
-#library(ropls)
-
-#install.packages("pls")
-
-library(googledrive)
-library(here)
-
-#library(pls)
+# Set printing source code
 knitr::opts_chunk$set(echo = TRUE)
-library(GenomicRanges)
-library(GenomicFeatures)
+
+# Load packages
+# CRAN packages
 library(tidyverse)
-
-
-#  BiocManager::install('PCAtools')
-library(PCAtools)
 library(patchwork)
 library(gridExtra)
-
-
-# For linear model
 library(lme4)
-library(lmerTest)   # adds p-values
+library(lmerTest)
 
-
-# For handling fasta files
+#Bioconductor packages
+library(GenomicRanges)
+library(GenomicFeatures)
+library(PCAtools)
 library(Biostrings)
-
 
 select = dplyr::select
 
+# Set correct select function
+select = dplyr::select
 
+# Define tissue colors
 types = c("Stipe","Lamella","Spore","control")
-colors = c("#96c176ff","#cf9ddbff","#4472C4ff","#000000FF")
-types = c("Stipe","Lamella","Spore","control","stipe","lamella","spore")
-colors = c("#96c176ff","#cf9ddbff","#4472C4ff","#000000FF","#96c176ff","#cf9ddbff","#4472C4ff")
+colors = c("#96C176FF","#CF9DDBFF","#4472C4FF","#000000FF")
+types = c("Stipe","Lamella","Spore","control","stipe","lamella","spore") # Catch lowercase tissues
+colors = c("#96C176FF","#CF9DDBFF","#4472C4FF","#000000FF","#96C176FF","#CF9DDBFF","#4472C4FF")
 names(colors) = types
-  
 
+# Define genomic context colors
 annotationColors = c("mRNA" = "#4472C4","TE" = "#C00000","Both" = "#9D475B","intergenic" = "#AFABAB")
 
-
-
+# Define methylation level colors (< 0.05, 0.05 - 0.30, 0.30 - 0.75, 0.75 - 0.90, > 0.90)
 methylationLevelColors = my_colors <- c(
-  "Nothing"   = "#4575b4",
-  "Low"  = "#91bfdb",
-  "Medium"  = "#e0f3f8",
-  "High"  = "#fee090",
-  "All" = "#d73027"
+  "Nothing"   = "#4575B4",
+  "Low"  = "#91BFDB",
+  "Medium"  = "#E0F3F8",
+  "High"  = "#FEE090",
+  "All" = "#D73027"
 )
-
-
 
 ```
 
@@ -74,54 +59,24 @@ methylationLevelColors = my_colors <- c(
 
 # Annotation
 
-
-### TE fastaReference
-```{r, message=FALSE}
-
-# Load the TE fasta file
-TEfastaFile = here("reference","Maror2.repeat.library.2.3.fasta")
-TEfasta = readDNAStringSet(TEfastaFile)
-
-# remove all the - in the sequences
-TEfasta = DNAStringSet(gsub("-", "", as.character(TEfasta)))
-
-# Get all the lengths in a data frame
-TEfasta.df = data.frame(
-  TE_ID = names(TEfasta),
-  length = width(TEfasta)) %>%
-  mutate(TE_ID = gsub("Maror","",TE_ID)) %>%
-  separate(TE_ID, into = c("TEclass","other"), sep = "/") %>%
-  separate(TEclass, into = c("TEclass","class"), sep = "#") %>%
-   separate(TEclass, into = c("TEfamily","nr"), sep = "-", remove = FALSE) %>% 
-  mutate(nr = as.numeric(nr)) %>%
-  select(-other)
-  
-  
-
-```
-
-
-
-
-
-
-
 ### TE reference
 ```{r, message=FALSE}
+# Define GFF3 columns
 gff3Colnames =c("seqid", "source",
                 "type","start",
                 "end", "score",
                 "strand","phase",
                 "attributes")
 
-
+  # Load information about TE classes, included in repository
   TE.classes = read_csv(file = here("annotation","Repeat.classes.csv")) %>%
-    rename(TEfamily = "Name") %>%
-    rename(Notes = "Superfamily / Notes")
+    rename(Name = "TEfamily") %>% 
+    rename("Superfamily / Notes" = "Notes") #columns renamed for downstream use
 
-  
+  # Define TE file location, included in repository
   TEFile <- here("annotation","Maror2.repeatmasker.rmlib2.3.gff")
 
+  # Read in TE dataframe from gff file
   TEdf =    read_tsv(file = TEFile, col_names = gff3Colnames,comment = "#") %>% separate(attributes, into = c("ID","target"), sep = ";") %>%
     mutate(ID = as.numeric(gsub("ID=","",ID))) %>%
     separate(target, into = c("Target","motif",
@@ -132,7 +87,7 @@ gff3Colnames =c("seqid", "source",
     select(seqid,start,end,score,
            strand, ID,motif,
            motifStart,motifStop) %>%
-    rename(TEID = "ID") %>%
+    rename(ID = "TEID") %>%
     mutate(TE_ID2 = 1:n()) %>%
     mutate(motifStart = as.numeric(gsub(" ","",motifStart))) %>%
     mutate(motifStop = as.numeric(gsub(" ","",motifStop))) %>%
@@ -141,7 +96,7 @@ gff3Colnames =c("seqid", "source",
     mutate(TEclass = gsub("Maror","",TEclass)) 
 
  
-
+  # Generate GRanges of TE file
   TEs = makeGRangesFromDataFrame(TEdf,
                                  seqnames.field = "seqid", 
                                  start.field = "start", 
@@ -150,67 +105,12 @@ gff3Colnames =c("seqid", "source",
                                  keep.extra.columns = TRUE)
   
 
+# Merge TE classes with dataframe to add annotation and remove other repeat annotations
+# From 13309 to 8893 repeats
 TEdf%>%
   separate(TEclass, into = c("TEfamily","nr"), sep = "-",remove = FALSE) %>%
   inner_join(TE.classes)->
   TEdf
-
-TEdf %>%
-  group_by(TEfamily) %>% summarise(n = n(), min = min(motifStart), max = max(motifStop)) %>%
-  mutate(TElength = max - min) %>%
-  filter(TElength > 1000) %>%
-  inner_join(TEdf) %>%
-  mutate(fraction =(motifStop-motifStart) / TElength)->
-  TEdf.long
-
-TEdf.long  %>% separate(TEclass, into = c("TEfamily","nr"), sep = "-",remove = FALSE) ->
-  TEdf.long
-
-TEdf.long %>% 
-  inner_join(TE.classes) %>% 
-  filter(grepl("DNA",Class)) %>%
-  ggplot(aes(x = nr, y = fraction)) + 
-  geom_boxplot() +
-  theme_minimal() + 
-  theme(axis.text.x = element_text(angle = 90, hjust = 1,vjust = 0.5))+ 
-  facet_grid(Class~TEfamily, scales = "free_x", space = "free") -> 
-  TE.distribution.ClassII.plot
-
-TEdf.long %>% 
-  inner_join(TE.classes) %>% 
-  filter(grepl("Retro",Class)) %>%
-    ggplot(aes(x = nr, y = fraction)) + 
-  geom_boxplot() +
-  theme_minimal() + 
-  theme(axis.text.x = element_text(angle = 90, hjust = 1,vjust = 0.5))+ 
-  facet_grid(Class~TEfamily, scales = "free_x", space = "free") -> 
- TE.distribution.ClassI.plot
-
-TEdf.long %>% 
-  inner_join(TE.classes) %>% 
-  filter(!grepl("DNA",Class)) %>%
-  filter(!grepl("Retro",Class)) %>%
-  ggplot(aes(x = nr, y = fraction)) + 
-  geom_boxplot() +
-  theme_minimal() + 
-  theme(axis.text.x = element_text(angle = 90, hjust = 1,vjust = 0.5))+ 
-  facet_grid(.~TEfamily, scales = "free_x", space = "free") -> 
- TE.distribution.Other.plot
-
-
-TE.distribution.ClassI.plot+
-  TE.distribution.ClassII.plot+
-  TE.distribution.Other.plot +
-  plot_annotation(tag_levels = 'A')+plot_layout(ncol = 1) ->
-  TE.distribution.plots
-
-#ggsave(here("results","annotation","TE.distribution.plots.pdf"),
-#       TE.distribution.plots,
-#       width = 10, height = 15, units = "in", dpi = 300)
-
-  
-TEdf.long %>% arrange(TEclass, -fraction) %>% 
-  filter(fraction > 0.25)
 
 ```
 
@@ -218,38 +118,39 @@ TEdf.long %>% arrange(TEclass, -fraction) %>%
 ## Gene reference 
 ```{r, message=FALSE}
 
-gtfFile = here("annotation","GCF_018924745.1_UU_Maror_2_genomic.gff")	
+gtfFile = here("annotation","GCF_018924745.1_UU_Maror_2_genomic.gff")	# Included in repository
 txdb <- makeTxDbFromGFF(file=gtfFile, dataSource="ensemblgenomes",format = "gff3")
 
-
+# define GFF3 columns
 gff3Colnames =c("seqid", "source",
                 "type","start",
                 "end", "score",
                 "strand","phase",
                 "attributes")
-
+  # Read in the gff file
   annotation.df =    read_tsv(file = gtfFile, col_names = gff3Colnames,comment = "#") 
 
-
+# Keep only mRNA annotations
  annotation.df %>% filter(type =="mRNA") %>%
    group_by(seqid,start,end, strand) %>%
-   slice_head(n = 1) %>%
+   slice_head(n = 1) %>% # Remove multiple mRNA annotations on the same genomic region
    ungroup() %>%
    separate_longer_delim(attributes, delim = ";") ->
    test
- 
+  # Keep only relevant attributes and give them separate columns
+  # Drop any unused columns
   test %>% select(seqid,start,end,strand,attributes) %>%
    separate(attributes, into = c("key","value"), sep = "=") %>%
    filter(key %in% c("Name","locus_tag","product")) %>%
    pivot_wider(values_from = "value",names_from = "key") -> 
    annotation.mRNA.df
 
- annotation.mRNA.df %>% group_by(product) %>% summarise(n = n())
- 
+# Add tx_id column
 annotation.mRNA.df %>% select(seqid,start,end, strand,Name,locus_tag,product) %>%
   mutate(tx_id = 1:n()) -> 
   annotation.mRNA.df
 
+# Create GRanges object
 mRNAs = makeGRangesFromDataFrame(annotation.mRNA.df,
                                  seqnames.field = "seqid", 
                                  start.field = "start", 
@@ -262,7 +163,7 @@ mRNAs = makeGRangesFromDataFrame(annotation.mRNA.df,
 
 Run only once for getting relationship between protein ID (XP) and gene ID (XM)
 ```{r, inlcude false  }
-
+# Add XM and XP IDs
 gene2ProteinFile = here("annotation","gene2protein_relationship.csv")
 
 relationship_df = read_csv(gene2ProteinFile)
@@ -271,62 +172,15 @@ relationship_df %>% mutate(Name = XM_ID) -> relationship_df
 annotation.mRNA.df = inner_join(annotation.mRNA.df,relationship_df , by = "Name")
 ```
 
-## Distance between RNA and TEs
-```{r, message=FALSE}
-# Find the nearest TE for each mRNA
-# query = mRNAs, subject = TEs
-nearest_hits <- distanceToNearest(mRNAs, TEs, ignore.strand=TRUE)
-# Extract results into a readable format
-# This creates a data frame with mRNA index, TE index, and the distance
-results <- as.data.frame(nearest_hits)
-
-# Optional: Merge metadata to see which mRNA is near which TE
-results$locus_tag <- mRNAs$locus_tag[results$queryHits]
-results$TE_ID2   <- TEs$TE_ID2[results$subjectHits] # Replace 'name' with your TE column name
-
-results %>%
-  select(locus_tag, TE_ID2, distance) ->
-  GeneBody_TE_distance
-
-```
-
-
-
-
-
 
 # Samples 
 ```{r, message=FALSE}
-
-select = dplyr::select
-
+# Read and organize sample data
 samples.ring.methyl.df = read_csv(file = here("data","meDNA","meDNA.metaData.csv"))
-
 
 samples.ring.methyl.df %>% arrange(Tissue,Location,Replicate) -> 
   samples.ring.methyl.df
-
-
-samples.ring.methyl.df %>% group_by(Tissue,Location) %>% summarise(n = n()) %>%
-  pivot_wider(names_from = "Location", values_from = "n")->
-  samples.ring.methyl.df.summary
-
-
-
-# make the directory if it does not exist
-dir.create(here("results","meDNA"), showWarnings = FALSE, recursive = TRUE)
-
-# Open the PDF device
-pdf(here("results","meDNA","meDNA.samples.summary"), width = 8, height = 11)
-# Draw the table
-grid.table(samples.ring.methyl.df.summary)
-# Close the device
-dev.off()
-
 ```
-
-
-
 
 # Read in data
 
@@ -334,20 +188,13 @@ Loading it from the google drive. This might change when we publish
 
 ```{r, message=FALSE}
 
-# This will prompt you to log in to your Google account in your browser
-drive_auth()
+#TODO: Insert DOI
+# Data can be obtained from ###INSERT DOI#####
+meData_path <- here("data", "meDNA", "methylationData.samples.QC.csv.gz")
 
-# Read the file using its ID or name
-file_id <- as_id("1C9qPmUr6oE80PXn8adjG1q4-pRvqQkRk")
-
-# 2. Download to a temporary location with the correct extension
-# This ensures read_csv knows it's a gzipped file
-temp_path <- tempfile(fileext = ".csv.gz")
-drive_download(file_id, path = temp_path, overwrite = TRUE)
-
-# 3. Read it - read_csv automatically handles the decompression
-methylationData.3.QC <- read_csv(temp_path)
-
+# Read in the data, read_csv automatically handles the decompression
+# Data consists of every position of every sample that is considered in the final dataset. 
+methylationData.3.QC <- read_csv(meData_path)
 
 ```
 

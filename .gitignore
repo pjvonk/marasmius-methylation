@@ -47,3 +47,6 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+# Input data file
+data/meDNA/methylationData.samples.QC.csv.gz
