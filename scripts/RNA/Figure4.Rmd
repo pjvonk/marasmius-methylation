@@ -11,55 +11,59 @@ date: "2024-09-11"
 
 ## setup
 ```{r setup, include=FALSE}
-
-
+# Set printing source code
 knitr::opts_chunk$set(echo = TRUE)
+
+# Load packages
+# CRAN packages
+library(tidyverse)
+library(here)
+library(ggrepel)
+library(patchwork)
+library(openxlsx)
+
+#Bioconductor packages
 library(clusterProfiler)
 library(GO.db)
 library(GenomicRanges)
 library(GenomicFeatures)
-library(tidyverse)
 library(DESeq2)
-library(here)
-library(ggrepel)
-library(patchwork)
+library(enrichplot)
 
-
+# Set correct select function
 select = dplyr::select
 
-
-
-
-types = c("Stipe","Lamella","Spore","control","stipe","lamella","spore")
-colors = c("#96c176ff","#cf9ddbff","#4472C4ff","#000000FF","#96c176ff","#cf9ddbff","#4472C4ff")
+# Define tissue colors
+types = c("Stipe","Lamella","Spore","control")
+colors = c("#96C176FF","#CF9DDBFF","#4472C4FF","#000000FF")
+types = c("Stipe","Lamella","Spore","control","stipe","lamella","spore") # Catch lowercase tissues
+colors = c("#96C176FF","#CF9DDBFF","#4472C4FF","#000000FF","#96C176FF","#CF9DDBFF","#4472C4FF")
 names(colors) = types
-  
+
+# Define genomic context colors
 annotationColors = c("mRNA" = "#4472C4","TE" = "#C00000","Both" = "#9D475B","intergenic" = "#AFABAB")
 
+# Define methylation level colors (< 0.05, 0.05 - 0.30, 0.30 - 0.75, 0.75 - 0.90, > 0.90)
 methylationLevelColors = my_colors <- c(
-  "Nothing"   = "#4575b4",
-  "Low"  = "#91bfdb",
-  "Medium"  = "#e0f3f8",
-  "High"  = "#fee090",
-  "All" = "#d73027"
+  "Nothing"   = "#4575B4",
+  "Low"  = "#91BFDB",
+  "Medium"  = "#E0F3F8",
+  "High"  = "#FEE090",
+  "All" = "#D73027"
 )
-
-
 
 ```
 
 ## Data from Nextflow
 
 ```{r}
-
-dataDir = "../../data/RNA/salmon/"
+# Define location of RNA data, included in the repository
+dataDir = here("data", "RNA", "salmon")
 ```
 
 ## Samples 
 ```{r}
-
-select = dplyr::select
-
+# Read in the samples and rename certain variables
 samples.ring.RNA.df = read_csv(file = here("data","RNA","RNA.samples.csv"))
 samples.ring.RNA.df %>%
   mutate(Sample = sample) %>%
@@ -93,16 +97,16 @@ samples.ring.RNA.df
 
 ### Gff reference
 ```{r}
-
-gtfFile = here("annotation/GCF_018924745.1_UU_Maror_2_genomic.gff")	
+# Load gff file included in this repository
+gtfFile = here("annotation", "GCF_018924745.1_UU_Maror_2_genomic.gff")	
 txdb <- makeTxDbFromGFF(file=gtfFile, dataSource="ensemblgenomes",format = "gff3")
-
 
 ```
 
 
 ### Gene reference 
 ```{r }
+# Load gff and extract mRNAs from the annotation. Reorder attribute column for downstream processing
 
 gff3Colnames =c("seqid", "source",
                 "type","start",
@@ -145,6 +149,7 @@ mRNAs = makeGRangesFromDataFrame(annotation.mRNA.df,
 ```
 
 ```{r, inlcude false  }
+# create the relationship between XP and XM in the repository. Not necessary as the result is included in the repository
 
 ## Check if relationship file already exists, if not create it
 if(!file.exists(here("annotation","gene2protein_relationship.csv"))){
@@ -179,11 +184,7 @@ annotation.mRNA.df = inner_join(annotation.mRNA.df,relationship_df , by = "Name"
 
 ### PROsite annotation
 ```{r}
-# downloading the data from dardel
-#cd git/germline_marasmius/annotation
-#
-# scp johanrei@dardel.pdc.kth.se:/cfs/klemming/projects/snic/sllstore2017101/Marasmius/data/ref-genomes/Maror2/Maror2.ipr.tsv . 
-
+# Include available PROsite annotation
 
 IPR = read_tsv(here("annotation","GCF_018924745.1_UU_Maror_2_proteins.faa.tsv.gz"), col_names = FALSE)
 
@@ -220,19 +221,6 @@ annotation.mRNA.IPS.df %>%
   filter(GO != "-") %>%
   separate_rows(GO, sep = "\\|")->
   annotation.mRNA.GO.df
-  
-
-
-
-if (!requireNamespace("BiocManager", quietly = TRUE)) {
-    install.packages("BiocManager")
-}
-
-#BiocManager::install("GO.db")
-
-# Load the GO.db package
-library(GO.db)
-
 
 # List all available GO terms with their descriptions
 go_terms <- toTable(GOTERM)
@@ -254,11 +242,6 @@ annotation.mRNA.GO.df %>%
 
 annotation.mRNA.GO.df %>%distinct(Name)
 ```
-
-
-
-
-
 
 ### RNA
 ```{r}
@@ -287,6 +270,8 @@ countData@assays@data$counts %>% as.data.frame() -> count_df
 
 ### Remove lowly  expressed genes
 ```{r}
+
+# Filter minimal counts to >10 across all samples.
 dds <- dds[rowSums(counts(dds)) > 10, ]
 
 
@@ -316,7 +301,6 @@ pca_df <- as.data.frame(pca$x) %>%
 
 ggplot(pca_df, aes(x = PC1, y = PC2, color = Tissue, shape = Location, label = sample)) +
   geom_point(size = 3) +
-  geom_text_repel(show.legend = FALSE, max.overlaps = 10) +
   labs(
     title = "PCA of VST-normalized counts",
     x = paste0("PC1 (", round(percentVar[1] * 100), "% variance)"),
@@ -324,48 +308,19 @@ ggplot(pca_df, aes(x = PC1, y = PC2, color = Tissue, shape = Location, label = s
   ) +
   theme_minimal() +
   theme(legend.position = "right") + 
-  scale_color_manual(values = colors)-> PCA.plot
+  scale_color_manual(values = colors) -> PCA.plot
 
-ggsave(here("figures","Figure4","PCA_vst_normalized_counts.pdf"),
+ggsave(here("figures","Figure4","Fig4B.pdf"),
        width = 8, height = 6,plot = PCA.plot)
-
-
-
-pca_df  %>% select(PC1,PC2,PC3,PC4,
-                   Tissue,Location,Replicate) %>%
-  mutate(Tissue = factor(Tissue, levels = c("stipe","lamella","spore"))) %>%
-  mutate(Location = factor(Location, levels = c("northeast","northwest","north","east","west"))) ->
-  pca_df.2
-library(GGally)
-ggpairs(pca_df.2, 
-        aes(color = Tissue, shape = Location),
-        columns = 1:4,
-        lower = list(continuous = wrap("points", size = 2)),
-        diag = list(continuous = wrap("barDiag", fill = "grey")))  +
-  scale_fill_manual(values = colors)+
-  scale_color_manual(values = colors) -> pca_pairs_plot
-
-ggsave(here("figures","Figure4","PCA_vst_normalized_counts_pairs.png"),
-       width = 8, height = 6,plot = pca_pairs_plot)
-
-data.frame(PC = colnames(pca$x), variance = percentVar*100) %>%
-  mutate(PC = factor(PC, levels = colnames(pca$x))) %>%
-  ggplot(aes(x = PC, y = variance)) +
-  geom_bar(stat = "identity", fill = "steelblue") +
-  labs(title = "Variance Explained by Each Principal Component",
-       x = "Principal Component",
-       y = "Variance Explained (%)") +
-  theme_minimal() ->
-  pca_variance_plot
-ggsave(here("figures","Figure4","PCA_variance_plot.png"),
-       width = 8, height = 6,plot = pca_variance_plot)
 
 ```
 
 ## Deseq
 ```{r}
+# Run Deseq2
 dds <- DESeq(dds)
 
+# extract result
 res <- results(dds, 
                contrast = c("Tissue", "stipe", "lamella"),
                alpha = 0.05, 
@@ -373,21 +328,43 @@ res <- results(dds,
                independentFiltering = TRUE, 
                pAdjustMethod = "BH")
 
+# Store it as dataframe
 res.df <- as.data.frame(res[order(res$padj), ])
 
+# Add basemean per tissue
+norm_counts <- counts(dds, normalized = TRUE)
+coldata <- as.data.frame(colData(dds))
 
+# Calculate mean per tissue
+
+stipe_samples <- coldata$Tissue == "stipe"
+lamella_samples <- coldata$Tissue == "lamella"
+
+# Compute means per gene
+baseMean_stipe <- rowMeans(norm_counts[, stipe_samples])
+baseMean_lamella <- rowMeans(norm_counts[, lamella_samples])
+
+# Add the basemean
+
+res.df$baseMean_stipe <- baseMean_stipe[rownames(res.df)]
+res.df$baseMean_lamella <- baseMean_lamella[rownames(res.df)]
+
+# add annotation information
 res.df.all <- res.df[!is.na(res.df$padj) , ] %>%  rownames_to_column(var = "locus_tag") %>%
   mutate(locus_tag = gsub("gene-","",locus_tag)) %>%
   inner_join(annotation.mRNA.df) 
 
-
+# Set significance levels
 res.df.all %>%
   mutate(DE = "Significant") %>%
   mutate(DE = replace(DE, abs(log2FoldChange) <2, "Not Significant")) %>%
   mutate(DE = replace(DE, padj >0.05, "Not Significant"))  ->
   res.df.all
 
+# Write to excel
+write.xlsx(res.df.all, here("results", "RNA", "Supplementary_table_3.xlsx"))
 
+# Make volcano plot of expression
 
 res.df.all %>% ggplot(aes(x = log2FoldChange, y = -log10(padj), color = DE)) +
   geom_point(size = 0.3) +
@@ -400,38 +377,19 @@ res.df.all %>% ggplot(aes(x = log2FoldChange, y = -log10(padj), color = DE)) +
   scale_color_manual(values = c("Significant" = "#4472C4","Not Significant" = "grey" )) -> volcano_plot
 
 
-res.df.all %>% ggplot(aes(x = log2FoldChange)) +
-  geom_density() +
-  geom_vline(xintercept = c(-2, 2), linetype = "dashed", color = "red") +
-  theme_minimal() -> 
-  Density_plot
+ggsave(here("figures","Figure4","Fig4C.pdf"),
+       width = 8, height = 6,plot = volcano_plot)
 
-Density_plot+ volcano_plot + plot_layout(ncol = 1) ->
-  combined_plot 
-
-ggsave(here("figures","Figure4","volcano_plot_stipe_vs_lamella.pdf"),
-       width = 8, height = 6,plot = combined_plot)
-
-
-
+# Count significant values
 res.df.sig <- res.df.all[abs(res.df.all$log2FoldChange) > 2 & res.df.all$padj<0.05 , ]
-
-
-
-
 
 ```
 
 
 
-# Gene set enrichment
+# Gene set enrichment; Figure 4D/E
 
 ```{r}
-
-
-
-library(clusterProfiler)
-
 annotation.mRNA.GO.df %>%
   select(GO,Name) ->
   term2Gene
@@ -478,80 +436,15 @@ enricher(res.df.sig.lamella$XM_ID,
   GO_enrichment.lamella
 
 
-library(enrichplot)
-dotplot(GO_enrichment.lamella, showCategory=20) 
-dotplot(GO_enrichment.stipe, showCategory=20) 
+dotplot.lamellae <- dotplot(GO_enrichment.lamella, showCategory=20) 
+dotplot.stipe <- dotplot(GO_enrichment.stipe, showCategory=20) 
+
+ggsave(here("figures", "Figure4", "Fig4D.pdf"), plot = dotplot.stipe, width = 6, height=6)
+ggsave(here("figures", "Figure4", "Fig4E.pdf"), plot = dotplot.lamellae, width = 6, height=6)
 ```
 
 
-
-```{r, warning = FALSE}
-
-
-geneList <- res.df.all$log2FoldChange
-names(geneList) <- res.df.all$XM_ID
-
-# Sort the list in decreasing order (ESSENTIAL for GSEA)
-geneList <- sort(geneList, decreasing = TRUE)
-
-# 2. Prepare the Annotation Data Frames
-# Column 1 must be the Term ID, Column 2 must be the Gene ID
-t2g <- annotation.mRNA.GO.df %>% select(GO, Name) 
-
-# Column 1 must be the Term ID, Column 2 must be the Name/Description
-t2n <- go_terms %>% select(GO, Term)
-
-# 3. Run the GSEA
-# Adjust nPermSimple if you get a warning about p-value precision
-gsea_results <- GSEA(
-  geneList      = geneList,
-  TERM2GENE     = t2g,
-  TERM2NAME     = t2n,
-  pvalueCutoff  = 0.05,
-  pAdjustMethod = "BH",
-  minGSSize     = 10,  # Minimum genes in a set to be considered
-  maxGSSize     = 500, # Maximum genes in a set to be considered
-  verbose       = FALSE
-)
-
-# 4. View the results
-# This shows the Enrichment Score (ES) and Normalized Enrichment Score (NES)
-head(gsea_results@result)
-
-library(enrichplot)
-
-# Plot the top enriched term (geneSetID = 1)
-# 'p' includes the running score, the 'rug' (black bars), and the p-value table
-gseaplot2(gsea_results, 
-          geneSetID = 5, 
-          title = gsea_results$Description[5], 
-          color = "firebrick", 
-          pvalue_table = TRUE)
-
-
-dotplot(gsea_results, 
-        showCategory = 20, 
-        split = ".sign") + 
-  facet_grid(.~.sign) + 
-  scale_y_discrete(labels = function(x) str_wrap(x, width = 40)) +
-  theme_minimal()+
-  theme(axis.text.y = element_text(size = 8))+
-  
-  labs(title = "Top Enriched GO Terms (GSEA)")
-
-
-ridgeplot(gsea_results, showCategory = 15) + 
-  scale_y_discrete(labels = function(x) str_wrap(x, width = 40)) +
-  theme_minimal()+
-  theme(axis.text.y = element_text(size = 8)) # Optional: shrink font slightly
-
-
-
-
-```
-
-
-## Check with methylated samples
+## Check with methylated samples; Figure 4A
 
 ```{r}
 
@@ -585,75 +478,78 @@ abundance_df.2 %>%
   facet_grid(Tissue~Location, scales = "free") +
   scale_fill_manual(values = colors) +
   theme_minimal() +
-  theme(axis.text.x = element_text(angle = 90, hjust = 1)) 
-  
-abundance_df.2 %>%
-  ggplot(aes(x = sample, y = log2(abundance+1), fill = Tissue)) +
-  geom_boxplot()+
-  facet_grid(Tissue~Location, scales = "free") +
-  scale_fill_manual(values = colors) +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 90, hjust = 1)) 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) ->
+  violin_rna_abundance
+###plot abundance
+ggsave(here("figures", "SuppFigures", "supplemental_figure_RNA_abundance.pdf"), width=8, height=8)
   
   
+###Added to define required variable
+meData_path <- here("data", "meDNA", "methylationData.samples.QC.csv.gz")
+
+# 3. Read it - read_csv automatically handles the decompression
+methylationData.3.QC <- read_csv(meData_path)
+
+methylationData.3.QC %>%
+  filter(location == "GeneBody")  ->
+  methylationData.3.QC.mRNA
+
+
+
+
+methylationData.3.QC.mRNA %>%
+  group_by(Name) %>%
+  summarise(
+    p_value = tryCatch({
+      kruskal.test(percent ~ Tissue, data = cur_data())$p.value
+    }, error = function(e) NA)
+  ) %>%
+  mutate(significant = "No") %>%
+  mutate(significant = replace(significant, p_value < 0.0000001, "Yes")) ->
+  kruskal_results.mRNA
+
+
+
+# Filter significant results
+kruskal_results.mRNA %>%
+  filter(!is.na(p_value) & p_value < 0.00001)%>%
+  arrange(p_value) ->
+  kruskal_results.mRNA.sig
+
+methylationData.3.QC.mRNA %>% 
+  group_by(Name,Tissue ) %>%
+  summarise(depth = mean(depth), percent = mean(percent))->
+  methylationData.3.QC.mRNA.Name.Tissue.summary
+
+methylationData.3.QC.mRNA.Name.Tissue.summary %>%
+  mutate(methylationLevel = "All") %>%
+  mutate(methylationLevel = replace(methylationLevel, percent < 90, "High")) %>%
+  mutate(methylationLevel = replace(methylationLevel, percent < 75 , "Medium"))%>%
+  mutate(methylationLevel = replace(methylationLevel, percent < 30 , "Low"))%>%
+  mutate(methylationLevel = replace(methylationLevel, percent < 5 , "Nothing"))  ->
+methylationData.3.QC.mRNA.Name.Tissue.summary      
+### done
+ 
+ 
+
 abundance_df.2 %>%
     right_join(methylationData.3.QC.mRNA.Name.Tissue.summary)  ->
     abundance_df.3
   
 
 
- abundance_df.3 %>%
+Figure4A <- abundance_df.3 %>%
+  filter(Tissue != "spore") %>%
+  filter(!is.na(Location)) %>% 
   mutate(methylationLevel = factor(methylationLevel, levels = c("Nothing","Low","Medium","High","All"))) %>%
-   ggplot(aes(x = Location, y = log2(abundance+1), fill = methylationLevel)) +
-  geom_boxplot()+
-  facet_grid(Tissue~Location, scales = "free") +
+  ggplot(aes(x = methylationLevel, y = log2(abundance + 1), fill = methylationLevel)) +
+  geom_boxplot() +
+  facet_wrap(~Tissue, scales = "free") + 
   scale_fill_manual(values = methylationLevelColors) +
   theme_minimal() +
-  theme(axis.text.x = element_text(angle = 90, hjust = 1)) 
- 
- 
- abundance_df.3 %>%
-   mutate(methylationLevel = factor(methylationLevel, levels = rev(c("Nothing","Low","Medium","High","All")))) %>%
-   ggplot(aes(x = sample,  fill = methylationLevel)) +
-   geom_bar()+
-   facet_grid(Tissue~Location, scales = "free") +
-   scale_fill_manual(values = methylationLevelColors) +
-   theme_minimal() +
-   theme(axis.text.x = element_text(angle = 90, hjust = 1))
- 
- 
- 
- abundance_df.3 %>%
-   filter(Name %in% top5.mRNA$Name)  %>%
-   ggplot(aes(x = Tissue, y = log2(abundance+1), fill = Tissue)) +geom_boxplot() +
-   facet_wrap(~Name, scales = "free") +
-   scale_fill_manual(values = colors) +
-   theme_minimal() +
-   theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
-   labs(title = "Top 5 mRNA DE methylation across tissues",
-        x = "Tissue",
-        y = "Log2 Abundance")  
- 
- 
- abundance_df.2 %>% 
-   group_by(Name,seqid,start,end,strand,Tissue) %>%
-   summarise(RNAsamples = n(), abundance = sum(abundance)/RNAsamples ) -> 
-   mRNA.abundance.summary
- 
- methylationData.3.QC.mRNA.Name.Tissue.summary %>%
-   group_by(Name,Tissue) %>%
-   summarise(MethylationSamples = n(), methylation = sum(percent)/MethylationSamples)->
-   mRNA.methylation.summary
- 
- 
-   full_join(mRNA.methylation.summary,mRNA.abundance.summary) %>%
-     dplyr::select(Name,Tissue,RNAsamples,abundance,MethylationSamples,methylation ,seqid, start,end,strand) ->
-     mRNA.methylation.RNA.summary
- 
-write_csv(mRNA.methylation.RNA.summary,"../../data/RNA.meDNA.mRNA.summary.csv" ) 
-   
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+ggsave(here("figures", "Figure4", "Fig4A.pdf"), Figure4A, width=8, height=5)
+
+
 ```
-
-
-#Analyse RNA data
-
