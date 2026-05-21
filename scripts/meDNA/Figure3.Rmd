@@ -21,6 +21,16 @@ library(patchwork)
 library(gridExtra)
 library(lme4)
 library(lmerTest)
+library(here)
+library(NbClust)
+library(ComplexHeatmap)
+library(emmeans)
+library(performance)
+library(see)
+library(glmmTMB)
+library(tibble)
+library(openxlsx)
+
 
 #Bioconductor packages
 library(GenomicRanges)
@@ -199,9 +209,6 @@ methylationData.3.QC <- read_csv(meData_path)
 ```
 
 #Figure 3
-
-Check that the mRNA and TE analysis are similar in terms of significant sites
-
 ###  TE analysis
 
 ```{r }
@@ -224,8 +231,7 @@ methylationData.3.QC %>%
   methylationData.3.QC.TE ##5649 TEs
 ```
 
-
-####PCA analysis
+### Data filtering
 
 ```{r }
 # Extract methylation percentage of all TEs per sample
@@ -256,36 +262,26 @@ methylationData.3.QC.TE.summary %>%
   pivot_wider(values_from = "percent",names_from = c("Location","Replicate2","Tissue")) %>%
   column_to_rownames(var = "TE_ID2")%>%
   drop_na()->                     # Removes any row with at least one NA->
-  methylationData.3.QC.TE.wide
+  methylationData.3.QC.TE.wide ##3843 TEs
 
 ```
 
-
-####  Non-Parametric Test (Kruskal-Wallis)
-
-
-
-```{r }
-
-
-
-```
-
-
-#### Linear mixed model
+#### Filtering on TEs with sufficient informative sites (>10 CpG sites) and covered by at least 2 tissues
 ```{r}
-
-
+# Now we test for every TE if it is differentially methylated by location, tissue or replicate.
+# Extract unique TEs in methylation data: 5649 of 8893 TEs included
 methylationData.3.QC.TE %>% distinct(TE_ID2) ->
   TE.unique
 
+# detemerine for every tissue the methylation level at each TE start position
 methylationData.3.QC.TE %>%
   select(TE_ID2,Sample,Tissue,start,percent) %>%
   ungroup() %>%
   group_by(TE_ID2,Tissue,start) %>%
     summarise(n = n(), methylation = mean(percent)) ->
   TE.summary.all
-  
+
+# Filter out TEs with few CpG sites (<10) and those only covered in 1 tissue 
 TE.summary.all %>%
   group_by(TE_ID2,Tissue) %>%
   summarise(n = n()) %>%
@@ -294,45 +290,43 @@ TE.summary.all %>%
   group_by(TE_ID2) %>%
   summarise(n = n()) %>%
   filter(n >=2) ->
-  TE.filtered
+  TE.filtered # 3185 TEs
 
+# Filter to select only TEs with >10 unique positions covered and count how many positions they cover
 TE.summary.all %>% filter(TE_ID2 %in% TE.filtered$TE_ID2) %>%
   ungroup() %>%
   distinct(TE_ID2,start) %>%
   group_by(TE_ID2) %>%
   summarise(n = n()) %>%
-  filter(n > 10) ->
-  TE.filtered.nCpG.nObs
-  
-
-
+  filter(n > 10) -> # Consider changing to less stringent filter
+  TE.filtered.nCpG.nObs # Final TEs tested 2965
 
 ```
 
-
+### Running linear mixed model
 
 ```{r, message = FALSE, warning = FALSE}
 
-
-
-dist.list.Tissue = list()
+# lmer for Tissue
+dist.list.Tissue = list() # create empty list
 for(TE in TE.filtered.nCpG.nObs$TE_ID2){
-  TEinfo = list()
+  TEinfo = list() # create list to store result
     methylationData.3.QC.TE %>%
-      filter(TE_ID2 == TE) %>%
+      filter(TE_ID2 == TE) %>% # Filter on TE of interest
       select(Sample,Tissue,start,percent) ->
-      mat
-     model <- lmer(percent ~ Tissue + (1 | start), data = mat)
+      mat #store relevant data
+     model <- lmer(percent ~ Tissue + (1 | start), data = mat) # perform linear ME  model, with start as random intercept
        pval  <- anova(model)$`Pr(>F)`[1]
      TEinfo[["Name"]] = TE
      TEinfo[["data"]] = mat
      TEinfo[["mixedLinearModel"]] = model
      TEinfo[["pvalue"]] = pval
      
-     dist.list.Tissue[[TE]] = TEinfo
+     dist.list.Tissue[[TE]] = TEinfo # Store result
        
 }
 
+# lmer for Location
 dist.list.Location = list()
 for(TE in TE.filtered.nCpG.nObs$TE_ID2){
   TEinfo = list()
@@ -351,6 +345,7 @@ for(TE in TE.filtered.nCpG.nObs$TE_ID2){
        
 }
 
+# lmer for Replicate
 dist.list.Rep = list()
 for(TE in TE.filtered.nCpG.nObs$TE_ID2){
   TEinfo = list()
@@ -369,7 +364,7 @@ for(TE in TE.filtered.nCpG.nObs$TE_ID2){
        
 }
 
-
+# Extract p-values
 TEspvalues.Tissue = list()
 for(TE in TE.filtered.nCpG.nObs$TE_ID2){
   data.frame(
@@ -401,7 +396,7 @@ for(TE in TE.filtered.nCpG.nObs$TE_ID2){
 }
 
 
-
+# Adjust p values and extract significant at p.adjust < 0.0001
 bind_rows(TEspvalues.Tissue) %>%
   mutate(adj_pvalue = p.adjust(pvalue, method = "BH")) %>%
   mutate(significant = "No") %>%
@@ -421,8 +416,10 @@ bind_rows(TEspvalues.Rep) %>%
   mutate(significant = replace(significant, adj_pvalue < (0.0001), "Yes")) ->
   lmm_results.TE.Rep
 
+# Combine results
 lmm_results.TE = bind_rows(lmm_results.TE.Tissue,lmm_results.TE.Location,lmm_results.TE.Rep )
 
+# Plot results of linear mixed model
 
 lmm_results.TE %>% ggplot(aes(x = pvalue, color = Test)) +
   geom_density( adjust = 1/10) +
@@ -434,9 +431,10 @@ lmm_results.TE %>% ggplot(aes(x = pvalue, color = Test)) +
   ) + theme_light() ->
   TE.pvalue.density.plot
 
-ggsave(here("figures","Figure3","3AA.LMM.distribution.plot.pdf"),
+ggsave(here("figures","Figure3","Fig3A.pdf"),
        plot = TE.pvalue.density.plot,width = 180, height = 180, units = "mm", dpi = 300)
 
+# Extract significance values
 
 lmm_results.TE %>% arrange(adj_pvalue) %>%
   filter(significant == "Yes") ->
@@ -446,27 +444,11 @@ lmm_results.TE.significant %>%
   summarise(numberOfSignificant = n()) ->
   lmm_results.TE.significant.summary
 
-
-
-TEclass_stats <- TEclass_counts %>%
-  rowwise() %>%
-  mutate(
-    p_value = fisher.test(matrix(c(No, Yes, 839 , 5968), nrow = 2))$p.value
-  ) %>%
-  ungroup() %>%
-  mutate(ratio = Yes/No) %>%
-  arrange(-ratio) %>%
-  mutate(average =839/5968 ) %>%
-  mutate(median = median(ratio))
-
-
-
-
-
 ```
 
 ###  Aalysis of  significant TEs  
-```{r }    
+```{r }  
+# extract only those TEs initially included in the analysis  
 lmm_results.TE.Tissue %>% filter(significant == "Yes") %>%
   arrange(adj_pvalue) ->
   lmm_results.TE.Tissue.significant
@@ -474,23 +456,17 @@ lmm_results.TE.Tissue %>% filter(significant == "Yes") %>%
 TE_tissue_DE = intersect(lmm_results.TE.Tissue.significant$TE_ID2,as.numeric( rownames(methylationData.3.QC.TE.wide))) 
 
 methylationData.3.QC.TE.wide[as.character(TE_tissue_DE),]->
-
 methylationData.3.QC.TE.sig.wide 
-
-
-
-
 
 ```
 #### Cluster of TEs
+
 ##### Hierarchical clustering with correct number of clusters
 ```{r}
+## Cluster analysis. Determine optimal number of clusters and assign each TE
 
-
-## Cluster analysis
 dist_matrix <- dist(methylationData.3.QC.TE.sig.wide, method = "euclidean")
 hc <- hclust(dist_matrix, method = "ward.D2")
-library(NbClust)
 nb <- NbClust(methylationData.3.QC.TE.sig.wide, distance="euclidean", min.nc=2, max.nc=10, method="ward.D2")
 
 
@@ -516,7 +492,7 @@ clusters <- cutree(hc, nrOfClusters)
 
 clusters %>%  as.data.frame() %>%
   rownames_to_column(var = "TE_ID2") %>%
-  rename(cluster = ".") ->
+  rename("." = "cluster") ->
   clusters
 
 
@@ -529,6 +505,8 @@ clusters %>%  as.data.frame() %>%
 
 ```{r}
 
+#Figure 3C
+# Note orders have been manually set to fit the heatmap
 
 clusters %>%
   mutate(TE_ID2 = as.double(TE_ID2)) %>%
@@ -544,8 +522,6 @@ clusters.Tissue.summary %>% group_by(cluster) %>%
   mutate(clusterOrder = as.factor(row_number()))->
   cluster.order
   
-
-
 
 clusters %>%  
   mutate(TE_ID2 = as.double(TE_ID2)) %>%
@@ -581,7 +557,24 @@ clusters.Tissue.summary %>%
   inner_join(cluster.order)->
 clusters.summary
   
+ha = HeatmapAnnotation(
+    cluster = as.factor(clusters$cluster)
+)
 
+
+pdf(here("figures", "Figure3", "Fig3B.pdf"),
+    width = 8, height = 6)
+ComplexHeatmap::Heatmap(t(methylationData.3.QC.TE.wide[as.character(TE_tissue_DE),]),
+                        show_column_names = FALSE,
+                        show_column_dend = TRUE, 
+                        cluster_columns = hc,
+                        column_split = nrOfClusters,
+                        top_annotation = ha,
+                        cluster_rows =TRUE,  
+                        split = 2
+) 
+
+dev.off()
 
 clusters %>%
   mutate(TE_ID2 = as.double(TE_ID2)) %>%
@@ -604,100 +597,104 @@ clusters %>%
   )+
   scale_fill_manual(values = colors) -> distributionPerClusterPlot
    
-     
+ggsave(here("figures","Figure3","Fig3C.pdf"),
+       plot = distributionPerClusterPlot ,width = 8, height = 6, units = "in", dpi = 300)    
 
-ha = HeatmapAnnotation(
-    cluster = as.factor(clusters$cluster)
-)
+```
 
-distributionPerClusterPlot
+## Significance testing
+```{r}
+# Get counts per class of TEs per cluster
+clusters %>%
+  mutate(TE_ID2 = as.double(TE_ID2)) %>%
+  inner_join(TEdf) %>%
+  count(cluster, Class) %>%
+  pivot_wider(names_from = Class, values_from = n, values_fill = 0) -> cluster_summary
 
-pdf("~/MarasmiusMethylationRNA/figures/Figure3/TE.methylation.clustered.heatmap.pdf",
-    width = 8, height = 6)
-ComplexHeatmap::Heatmap(t(methylationData.3.QC.TE.wide[as.character(TE_tissue_DE),]),
-                        show_column_names = FALSE,
-                        show_column_dend = TRUE, 
-                        cluster_columns = hc,
-                        column_split = nrOfClusters,
-                        top_annotation = ha,
-                        cluster_rows =TRUE,  split = 2
-) 
+# Perform chi-squared test to test significance
+#Then perform a chi-squared
+count_matrix <- cluster_summary %>% 
+  select(`I (Retro)`, `II (DNA)`) %>% 
+  as.matrix()
+chisq_results <- chisq.test(count_matrix)
+print(chisq_results)
+chisq_results$residuals
 
-dev.off()
-distributionPerClusterPlot
+# Test significance of Figure 3C
+# Extract percentage methylation per tissue
 
-
-clusters %>%   
+# Note: Cluster 1 middle, cluster 2 is low and cluster 3 is high here
+# In all three comparisons lamellae vs spores p > 0.05, while stipe vs anything p < 0.0001
+clusters %>%
   mutate(TE_ID2 = as.double(TE_ID2)) %>%
   inner_join(methylationData.3.QC.TE) %>%
-  distinct(TE_ID2,cluster,TEclass) %>%
-  group_by(cluster,TEclass) %>%
-  summarise(nrOfTEs = n())  %>%
-  inner_join(cluster.order) %>%
-  filter(TEclass %in% clusters.count.summary$TEclass) %>%
-  mutate(TEfamily = TEclass) %>%
-  inner_join(TE.classes) %>%
-  ggplot(aes(x = clusterOrder, y = nrOfTEs, fill = Class)) +
-  geom_bar(stat = "identity", position = "fill") +
-  theme_light() +
-  labs(
-    title = "TE class distribution per TE cluster",
-    x = "TE Cluster",
-    y = "Number of TEs"
-  ) -> distribution
+  group_by(TE_ID2,Tissue,cluster ) %>%
+  summarise(percent = mean(percent) )-> clusters.methylation.percent
 
+# Middle methylation levels
+cluster_1_data <- clusters.methylation.percent %>% filter(cluster == 1)
+cluster_1_data <- cluster_1_data %>%
+  mutate(prop = percent / 100)
+n <- nrow(cluster_1_data)
+cluster_1_data$prop_adj <- (cluster_1_data$prop * (n - 1) + 0.5) / n # Adjust data to enable a beta model
 
-clusters %>%   
-  mutate(TE_ID2 = as.double(TE_ID2)) %>%
-  inner_join(methylationData.3.QC.TE) %>%
-  distinct(TE_ID2,cluster,TEclass) %>%
-  group_by(cluster,TEclass) %>%
-  summarise(nrOfTEs = n())  %>%
-  inner_join(cluster.order) %>%
-  filter(TEclass %in% clusters.count.summary$TEclass) %>%
-  mutate(TEfamily = TEclass) %>%
-  inner_join(TE.classes) %>%
-  ggplot(aes(x = clusterOrder, y = nrOfTEs, fill = TEfamily)) +
-  geom_bar(stat = "identity", position = "fill") +
-  theme_light() +
-  labs(
-    title = "TE class distribution per TE cluster",
-    x = "TE Cluster",
-    y = "Number of TEs"
-  ) -> distribution.TEfamily
+beta_mod_1 <- glmmTMB(prop_adj ~ Tissue + (1|TE_ID2), 
+                    data = cluster_1_data, 
+                    family = beta_family())
 
+tissue_comp_1 <- emmeans(beta_mod_1, pairwise ~ Tissue, type = "response")
+tissue_comp_1$contrasts
 
+# Low methylation levels
+cluster_2_data <- clusters.methylation.percent %>% filter(cluster == 2)
+cluster_2_data <- cluster_2_data %>%
+  mutate(prop = percent / 100)
+n <- nrow(cluster_2_data)
+cluster_2_data$prop_adj <- (cluster_2_data$prop * (n - 1) + 0.5) / n # Adjust data to enable a beta model
 
-cluster.order
+beta_mod_2 <- glmmTMB(prop_adj ~ Tissue + (1|TE_ID2), 
+                    data = cluster_2_data, 
+                    family = beta_family())
 
-clusters%>%   
-  inner_join(clusters.count.summary) %>%   
-  mutate(TE_ID2 = as.double(TE_ID2)) %>%
-  inner_join(methylationData.3.QC.TE) %>%
-  distinct(TE_ID2,cluster,TEclass) %>%
-  group_by(cluster,TEclass) %>%
-  summarise(nrOfTEs = n())  %>%
-  inner_join(cluster.order) %>%
-  ggplot(aes(x = clusterOrder, y = nrOfTEs)) +
-  geom_bar(stat = "identity") +
-  theme_light() +
-  labs(
-    title = "TE class distribution per TE cluster",
-    x = "TE Cluster",
-    y = "Number of TEs"
-  ) -> distribution2
+tissue_comp_2 <- emmeans(beta_mod_2, pairwise ~ Tissue, type = "response")
+tissue_comp_2$contrasts
 
+# high methylation levels
+cluster_3_data <- clusters.methylation.percent %>% filter(cluster == 3)
+cluster_3_data <- cluster_3_data %>%
+  mutate(prop = percent / 100)
+n <- nrow(cluster_3_data)
+cluster_3_data$prop_adj <- (cluster_3_data$prop * (n - 1) + 0.5) / n # Adjust data to enable a beta model
 
+beta_mod_3 <- glmmTMB(prop_adj ~ Tissue + (1|TE_ID2), 
+                    data = cluster_3_data, 
+                    family = beta_family())
 
+tissue_comp_3 <- emmeans(beta_mod_3, pairwise ~ Tissue, type = "response")
+tissue_comp_3$contrasts
 
-
-distributionPerClusterPlot+distribution2+
-  distribution+ distribution.TEfamily+ plot_layout(ncol = 2, guides = "collect") ->
-  MLM.Methylation.distribution
-  
-ggsave(here("figures","Figure3","LMM.classes.plot.pdf"),
-       plot = MLM.Methylation.distribution,width = 180, height = 180, units = "mm", dpi = 300)
 
 
 ```
 
+## Supplementary table 2
+
+```{r}
+#here I create a supplementary table based on the significance test of all the TEs included in the analysis
+#conver TE_ID2 to an integer
+publication_table <- lmm_results.TE
+
+#join TE annotation
+publication_table <- merge(publication_table, TEdf, by="TE_ID2")
+
+#prepare methylation_data
+methylationData.3.QC.TE.wide.TEID <- rownames_to_column(methylationData.3.QC.TE.wide)
+names(methylationData.3.QC.TE.wide.TEID)[names(methylationData.3.QC.TE.wide.TEID) == "rowname"] <- "TE_ID2"
+
+#Attempt the merge
+publication_table <- merge(publication_table, methylationData.3.QC.TE.wide.TEID, by="TE_ID2")
+
+#Export to excel
+write.xlsx(publication_table, here("results", "meDNA", "Supplementary_table_meDNA.xlsx"))
+
+```
