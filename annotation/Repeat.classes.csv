@@ -19,3 +19,6 @@ Kyakuja,II (DNA),TIR,A specific DNA transposon superfamily.
 Plavaka,II (DNA),TIR,Related to the CACTA superfamily.
 Satellite,N/A,Repeats,Not a TE. This is tandemly repeated DNA.
 U,Unknown,Unknown,Totally unclassified/Unknown repetitive sequence.
+P,II (DNA),TIR,Not applicable.
+LTRs,I (Retro),LTR,Not applicable.
+Novosib,II (DNA),TIR,Not applicable.

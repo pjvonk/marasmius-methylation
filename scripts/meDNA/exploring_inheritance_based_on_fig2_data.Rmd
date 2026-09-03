@@ -1,0 +1,840 @@
+---
+title: "Figure 2"
+output:
+ html_document:
+    toc: true
+    toc_float: true
+    code_folding: hide
+    theme: flatly
+date: "2024-09-11"
+---
+
+# Setup
+```{r setup, include=FALSE}
+# Set printing source code
+knitr::opts_chunk$set(echo = TRUE)
+
+# Load packages
+# CRAN packages
+library(tidyverse)
+library(patchwork)
+library(gridExtra)
+library(rstatix)
+library(purrr)
+library(here)
+
+# Bioconductor packages
+library(GenomicRanges)
+library(GenomicFeatures)
+library(PCAtools)
+
+# Set correct select function
+select = dplyr::select
+
+# Define tissue colors
+types = c("Stipe","Lamella","Spore","control")
+colors = c("#96C176FF","#CF9DDBFF","#4472C4FF","#000000FF")
+types = c("Stipe","Lamella","Spore","control","stipe","lamella","spore") # Catch lowercase tissues
+colors = c("#96C176FF","#CF9DDBFF","#4472C4FF","#000000FF","#96C176FF","#CF9DDBFF","#4472C4FF")
+names(colors) = types
+
+# Define genomic context colors
+annotationColors = c("mRNA" = "#4472C4","TE" = "#C00000","Both" = "#9D475B","intergenic" = "#AFABAB")
+
+# Define methylation level colors (< 0.05, 0.05 - 0.30, 0.30 - 0.75, 0.75 - 0.90, > 0.90)
+methylationLevelColors = my_colors <- c(
+  "Nothing"   = "#4575B4",
+  "Low"  = "#91BFDB",
+  "Medium"  = "#E0F3F8",
+  "High"  = "#FEE090",
+  "All" = "#D73027"
+)
+
+```
+
+# Annotation
+
+## TE reference
+```{r, message=FALSE}
+# Define GFF3 columns
+gff3Colnames =c("seqid", "source",
+                "type","start",
+                "end", "score",
+                "strand","phase",
+                "attributes")
+
+  # Load information about TE classes, included in repository
+  TE.classes = read_csv(file = here("annotation","Repeat.classes.csv")) %>%
+    rename(Name = "TEfamily") %>% 
+    rename("Superfamily / Notes" = "Notes") #columns renamed for downstream use
+
+  # Define TE file location, included in repository
+  TEFile <- here("annotation","Maror2.repeatmasker.rmlib2.3.gff")
+
+  # Read in TE dataframe from gff file
+  TEdf =    read_tsv(file = TEFile, col_names = gff3Colnames,comment = "#") %>% separate(attributes, into = c("ID","target"), sep = ";") %>%
+    mutate(ID = as.numeric(gsub("ID=","",ID))) %>%
+    separate(target, into = c("Target","motif",
+                              "motifStart","motifStop"),
+             sep = " ") %>%
+    mutate(motif = gsub("\"","",motif))%>%
+    mutate(motif = gsub("Motif:","",motif))  %>%
+    select(seqid,start,end,score,
+           strand, ID,motif,
+           motifStart,motifStop) %>%
+    rename(ID = "TEID") %>%
+    mutate(TE_ID2 = 1:n()) %>%
+    mutate(motifStart = as.numeric(gsub(" ","",motifStart))) %>%
+    mutate(motifStop = as.numeric(gsub(" ","",motifStop))) %>%
+    dplyr::rename(TEclass = "motif") %>%
+    mutate(TEclass = gsub(" ","",TEclass)) %>%
+    mutate(TEclass = gsub("Maror","",TEclass)) 
+
+ 
+  # Generate GRanges of TE file
+  TEs = makeGRangesFromDataFrame(TEdf,
+                                 seqnames.field = "seqid", 
+                                 start.field = "start", 
+                                 end.field = "end",
+                                 strand.field = "strand",
+                                 keep.extra.columns = TRUE)
+  
+
+# Merge TE classes with dataframe to add annotation and remove other repeat annotations
+# From 13309 to 8893 repeats
+TEdf%>%
+  separate(TEclass, into = c("TEfamily","nr"), sep = "-",remove = FALSE) %>%
+  inner_join(TE.classes)->
+  TEdf
+
+```
+
+## Gene reference 
+```{r, message=FALSE}
+
+gtfFile = here("annotation","GCF_018924745.1_UU_Maror_2_genomic.gff")	# Included in repository
+txdb <- makeTxDbFromGFF(file=gtfFile, dataSource="ensemblgenomes",format = "gff3")
+
+# define GFF3 columns
+gff3Colnames =c("seqid", "source",
+                "type","start",
+                "end", "score",
+                "strand","phase",
+                "attributes")
+  # Read in the gff file
+  annotation.df =    read_tsv(file = gtfFile, col_names = gff3Colnames,comment = "#") 
+
+# Keep only mRNA annotations
+ annotation.df %>% filter(type =="mRNA") %>%
+   group_by(seqid,start,end, strand) %>%
+   slice_head(n = 1) %>% # Remove multiple mRNA annotations on the same genomic region
+   ungroup() %>%
+   separate_longer_delim(attributes, delim = ";") ->
+   test
+  # Keep only relevant attributes and give them separate columns
+  # Drop any unused columns
+  test %>% select(seqid,start,end,strand,attributes) %>%
+   separate(attributes, into = c("key","value"), sep = "=") %>%
+   filter(key %in% c("Name","locus_tag","product")) %>%
+   pivot_wider(values_from = "value",names_from = "key") -> 
+   annotation.mRNA.df
+
+# Add tx_id column
+annotation.mRNA.df %>% select(seqid,start,end, strand,Name,locus_tag,product) %>%
+  mutate(tx_id = 1:n()) -> 
+  annotation.mRNA.df
+
+# Create GRanges object
+mRNAs = makeGRangesFromDataFrame(annotation.mRNA.df,
+                                 seqnames.field = "seqid", 
+                                 start.field = "start", 
+                                 end.field = "end",
+                                 strand.field = "strand",
+                                 keep.extra.columns = TRUE)
+  
+
+```
+
+## Relationship between XM and XP IDs
+```{r, inlcude false  }
+# Add XM and XP IDs
+gene2ProteinFile = here("annotation","gene2protein_relationship.csv")
+
+relationship_df = read_csv(gene2ProteinFile)
+
+relationship_df %>% mutate(Name = XM_ID) -> relationship_df
+annotation.mRNA.df = inner_join(annotation.mRNA.df,relationship_df , by = "Name")
+```
+
+# Samples 
+```{r, message=FALSE}
+
+# Read and organize sample data
+samples.ring.methyl.df = read_csv(file = here("data","meDNA","meDNA.metaData.csv"))
+
+samples.ring.methyl.df %>% arrange(Tissue,Location,Replicate) -> 
+  samples.ring.methyl.df
+
+```
+
+# Read in data
+```{r, message=FALSE}
+#TODO: Insert DOI
+# Data can be obtained from ###INSERT DOI#####
+meData_path <- here("data", "meDNA", "methylationData.samples.QC.csv.gz")
+
+# Read in the data, read_csv automatically handles the decompression
+# Data consists of every position of every sample that is considered in the final dataset. 
+methylationData.3.QC <- read_csv(meData_path)
+
+```
+
+# Figure 1D
+
+```{r, message=FALSE}
+# Calculate methylated fraction per sample per tissue
+
+methylationData.3.QC %>%
+  mutate(methylated = depth*percent /100) %>%
+  mutate(notMethylated = depth - methylated) %>%
+  group_by(Sample) %>%
+  summarise(methylated = sum(methylated), notMethylated = sum(notMethylated)) %>%
+  mutate(fraction = methylated /(notMethylated+methylated))->
+  sum
+
+sum %>%
+  inner_join(samples.ring.methyl.df) -> sum_wide
+
+sum_wide %>%
+  ggplot(aes(x = Tissue, y = fraction,fill = Tissue,)) +
+  geom_boxplot(outliers = FALSE)+
+  geom_jitter(width = 0.1,mapping = aes(shape =Location)) + 
+  theme_light()+
+  scale_fill_manual(values = colors) ->
+  fig1D
+
+ggsave(here("figures","Figure1","fig1D.pdf"),
+       plot = fig1D,
+        width = 4, height = 5, units = "in", dpi = 300)
+
+# Perform significance testing for figure 1D
+# Test variance
+levene_test(fraction ~ Tissue, data = sum_wide) # p>0.05 so we assume homogeneity of Variance
+
+# Perform ANOVA and test for normality 
+model <- aov(fraction ~ Tissue, data = sum_wide)
+res <- residuals(model)
+shapiro.test(res) # p<0.05 so no normality. Perform non-parametric test instead
+
+# Non-parametric test
+kruskal.test(fraction ~ Tissue, data = sum_wide) # p < 0.001
+# post-hoc dunns test
+dunn_res <- sum_wide %>%
+  dunn_test(fraction ~ Tissue, p.adjust.method = "BH")
+write.csv(dunn_res, here("results", "meDNA", "fig1D_significance_test.csv"))
+```
+
+# Figure 1D with mean percentage instead of all methylated vs non-methylated reads
+```{r, message=FALSE}
+methylationData.3.QC %>%
+  group_by(Tissue, Location, Replicate2) %>%
+  summarise(n = n(), depth = mean(depth), methylation = mean(percent)) %>%
+  mutate(fraction = methylation / 100) %>% 
+  ungroup() ->
+  methylationData.3.QC.distribution
+
+methylationData.3.QC.distribution %>%
+  ggplot(aes(x = Tissue, y = fraction, fill = Tissue,)) +
+  geom_boxplot(outliers = FALSE)+
+  geom_jitter(width = 0.1, mapping = aes(shape = Location)) + 
+  theme_light()+
+  scale_fill_manual(values = colors) ->
+  fig1D_fraction
+
+ggsave(here("figures","Figure1","fig1D_mean_percentage.pdf"),
+       plot = fig1D_fraction,
+        width = 4, height = 5, units = "in", dpi = 300)
+
+# Perform significance testing for figure 1D
+# Test variance
+levene_test(fraction ~ Tissue, data = methylationData.3.QC.distribution) # p>0.05 so we assume homogeneity of Variance
+
+# Perform ANOVA and test for normality 
+model <- aov(fraction ~ Tissue, data = methylationData.3.QC.distribution)
+res <- residuals(model)
+shapiro.test(res) # p<0.05 so no normality. Perform non-parametric test instead
+
+# Non-parametric test
+kruskal.test(fraction ~ Tissue, data = methylationData.3.QC.distribution) # p < 0.001
+# post-hoc dunns test
+dunn_res <- methylationData.3.QC.distribution %>%
+  dunn_test(fraction ~ Tissue, p.adjust.method = "BH")
+
+write.csv(dunn_res, here("results", "meDNA", "fig1D_significance_test_mean_percentage.csv"))
+
+```
+
+# Figure2 A + C
+
+```{r, message=FALSE}
+
+# Group data by:
+# location (Gene body, TE, intergenic)
+# Tissue (Lamella, Spore, Stipe)
+# Location (W, NW, N, NE)
+# Replicate (1, 2, 3)
+# Calculate the positions considered, mean read depth and mean methylation percentage
+methylationData.3.QC %>% 
+  group_by(location,Tissue,Location,Replicate2) %>% 
+  summarise(n = n(), depth = mean(depth), methylation = mean(percent)) ->
+  methylationData.3.QC.annotation.distribution
+
+# Plot Figure 2A
+methylationData.3.QC.annotation.distribution %>%
+  select(Tissue,Location,Replicate2,methylation,location) %>% # Select relevant variables
+  mutate(IDsample = paste(Location,Replicate2,Tissue,sep = "_")) %>% # Create sample identifier
+  mutate(fraction = methylation /100)%>% # Convert methylation to fraction
+  ggplot(aes(x = location, y = fraction, fill = location)) + 
+  geom_boxplot(outliers = FALSE) +
+  geom_jitter(width = 0.2) + 
+  theme_light() +
+  ylim(c(0,1))+
+  scale_fill_manual(values = colors)  -> fig2A
+
+ggsave(here("figures","Figure2","fig2A.pdf"),
+       plot = fig2A,
+        width = 4, height = 5, units = "in", dpi = 300)
+
+# Plot Figure 2C
+methylationData.3.QC.annotation.distribution %>%
+  select(Tissue,Location,Replicate2,methylation,location) %>% # Select relevant variables
+  mutate(IDsample = paste(Location,Replicate2,Tissue,sep = "_")) %>% # Create sample identifier
+  mutate(fraction = methylation /100)%>% #Convert methylation to fraction
+  ggplot(aes(x = Tissue, y = fraction, fill = Tissue)) + 
+  geom_boxplot(outliers = FALSE) +
+  geom_jitter(width = 0.2) + 
+  theme_light() +
+  scale_fill_manual(values = colors) +
+  facet_wrap(.~location, scales = "free_y") -> fig2C
+
+ggsave(here("figures","Figure2","fig2C.pdf"),
+            plot = fig2C,width = 8, height = 5, units = "in", dpi = 300)
+
+
+```
+
+# Figure 2B
+
+```{r, message=FALSE}
+
+# Select outliers from the data
+methylationData.3.QC.annotation.distribution %>% 
+  select(Tissue,Location,Replicate2,methylation,location) %>%
+  mutate(IDsample = paste(Location,Replicate2,Tissue,sep = "_")) %>%
+  filter(IDsample %in%
+           c("northeast_1_stipe","north_3_stipe","north_3_spore")) %>%
+    mutate(fraction = methylation /100) %>%
+    select(-methylation) %>%
+    pivot_wider(values_from = "fraction", names_from = "location" ) -> outliers  
+  
+# Plot figure 2
+  methylationData.3.QC.annotation.distribution %>% 
+    select(Tissue,Location,Replicate2,methylation,location) %>%
+      mutate(IDsample = paste(Location,Replicate2,Tissue,sep = "_")) %>%
+    mutate(fraction = methylation /100) %>%
+    select(-methylation) %>%
+    pivot_wider(values_from = "fraction", names_from = "location" )  %>%
+    ggplot(aes(x = GeneBody, y = TE, color = Tissue)) + geom_point()+
+    theme_light()+
+    geom_text_repel(data = outliers,aes(label = IDsample), color = "black")  +
+    scale_color_manual(values = colors) -> 
+    fig2B
+
+ggsave(here("figures","Figure2","fig2B.pdf"),plot = fig2B,
+       width = 6, height = 5, units = "in", dpi = 300)
+
+```
+
+# Statistical tests for figure 2C
+
+```{r, message=FALSE}
+
+# Perform a kruskal-wallis test on the different tissues per genomic context
+methylationData.3.QC.annotation.distribution %>% 
+    select(Tissue,Location,Replicate2,methylation,location) %>%
+      mutate(IDsample = paste(Location,Replicate2,Tissue,sep = "_")) %>%
+    mutate(fraction = methylation /100) %>%
+  group_by(location) %>%
+  summarise(
+    p_value = tryCatch({
+      kruskal.test(fraction ~ Tissue, data = cur_data())$p.value
+    }, error = function(e) NA),
+  )%>% 
+  mutate(comparison = "Location") %>%
+  mutate(adj_pvalue = p.adjust(p_value, method = "BH")) %>%
+  mutate(significant = "No") %>%
+  mutate(significant = replace(significant, adj_pvalue < (0.05), "Yes")) ->
+  kruskal_results.Methylation
+
+
+
+results <- methylationData.3.QC.annotation.distribution %>% 
+  select(Tissue, Location, Replicate2, methylation, location) %>%
+  mutate(
+    IDsample = paste(Location, Replicate2, Tissue, sep = "_"),
+    fraction = methylation / 100
+  ) %>%
+  group_by(location) %>%
+  group_modify(~{
+    
+    df <- .x  # current location
+    
+    ## --- Kruskal–Wallis test ---
+    kw <- tryCatch(
+      kruskal.test(fraction ~ Tissue, data = df),
+      error = function(e) NULL
+    )
+    
+    kw_p <- if (!is.null(kw)) kw$p.value else NA
+    
+    ## --- Dunn test (pairwise comparisons) ---
+    dunn <- df %>%
+      dunn_test(fraction ~ Tissue, p.adjust.method = "BH") %>%
+      mutate(
+        kw_p_value = kw_p
+      )
+    
+    dunn
+  }) %>%
+  ungroup() %>%
+  
+  ## Adjust the Kw p-values across all locations
+  group_by(location) %>%
+  mutate(
+    kw_p_adj = p.adjust(unique(kw_p_value), method = "BH")
+  ) %>%
+  ungroup() %>%
+  
+  ## Add significance flags
+  mutate(
+    kw_significant = kw_p_adj < 0.05,
+    pairwise_significant = p.adj < 0.05
+  )
+
+write_csv(results, here("results","meDNA","fig2C_significance_test.csv"))
+
+```
+
+
+
+
+```{r, message=FALSE}
+# Exploratory plotting of methylation level of different contexts
+# Not included in final results
+methylationData.3.QC %>% 
+  group_by(Tissue, location) %>%
+  summarise(mean = mean(percent))
+
+
+methylationData.3.QC %>% 
+  mutate(methylationLevel = "High") %>%
+  mutate(methylationLevel = replace(methylationLevel,
+                                    percent <90,
+                                    "Average" )) %>%
+  mutate(methylationLevel = replace(methylationLevel,
+                                    percent <10,
+                                    "Low" )) ->
+  methylationData.3.QC
+
+methylationData.3.QC %>% 
+  group_by(Location,location, Tissue,methylationLevel) %>%
+  summarise(n = n()) -> methylationData.3.QC.summary
+
+methylationData.3.QC.summary %>%
+  group_by(Location,location, Tissue) %>%
+  summarise(Total = sum(n)) %>% 
+  inner_join(methylationData.3.QC.summary) %>%
+  mutate(fraction = n /Total) -> methylationData.3.QC.summary
+
+methylationData.3.QC <- methylationData.3.QC %>%
+  mutate(methylationLevel = factor(methylationLevel, levels = c("High", "Average", "Low")))
+
+ggplot(methylationData.3.QC, aes(x = Tissue, fill = methylationLevel)) +
+  geom_bar(position = "fill") +
+  facet_wrap(facets = vars(location)) + # Ensure 'location' is used properly
+  scale_fill_manual(values = c("Low" = "blue", "Average" = "grey", "High" = "red")) +
+  theme_minimal() +
+  labs(
+    fill = "Methylation Level", 
+    x = "Tissue", 
+    y = "Count"
+  )-> methylationDistribution
+ggsave(here("figures","Figure2","MethylationDistribution.pdf"),plot = methylationDistribution)
+```
+
+
+### exploring correlation
+
+```{r, message=FALSE}
+library(data.table)
+library(ggplot2)
+
+# Convert to data.table
+setDT(methylationData.3.QC)
+
+# Set parameters
+minimum_common_CpGs <- 10000
+number_permutations <- 10000
+
+set.seed(2026)
+
+# Create identifier for each mushroom and each CpG position, filter on tissue and select relevant columns
+methylationData.3.QC %>%
+  mutate(
+    mushroom_id = paste(Location, Replicate, sep = "_"),
+    cpg_id = paste(seqid, start, sep = ":")
+  ) %>%
+  filter(
+    Tissue %in% c("lamella", "spore", "stipe"),
+    !is.na(percent)
+  ) %>%
+  select(
+    IDsample, Sample, mushroom_id, Location, Replicate, Tissue, seqid, start, cpg_id, percent, depth
+  ) -> meth
+
+# create metadata file to check data availability
+meth %>%
+  distinct(
+    IDsample, Sample, mushroom_id, Location, Replicate, Tissue
+  ) -> sample_metadata  
+
+# determine tissue availability
+sample_metadata %>%
+  select(
+    mushroom_id, Location, Replicate, Tissue, IDsample
+  ) %>%
+  pivot_wider(
+    names_from = Tissue, values_from = IDsample
+  ) -> tissue_availability
+tissue_availability
+
+
+# function to compare samples
+compare_two_samples <- function(
+    sample_1,
+    sample_2,
+    data = meth,
+    minimum_CpGs = minimum_common_CpGs) {
+
+  data %>%
+    filter(Sample == sample_1) %>%
+    select(
+      seqid,
+      start,
+      percent_1 = percent
+    ) -> sample_1_data
+
+   data %>%
+    filter(Sample == sample_2) %>%
+    select(
+      seqid,
+      start,
+      percent_2 = percent
+    ) -> sample_2_data
+
+  sample_1_data %>%
+    inner_join(
+      sample_2_data,
+      by = c("seqid", "start")
+    ) -> common_CpGs
+
+  n_common <- nrow(common_CpGs)
+
+  if (n_common < minimum_CpGs) {
+
+    return(
+      tibble(
+        sample_1 = sample_1,
+        sample_2 = sample_2,
+        n_common_CpGs = n_common,
+        spearman = NA_real_,
+        pearson = NA_real_,
+        median_abs_difference = NA_real_,
+        mean_abs_difference = NA_real_,
+        root_mean_square_difference = NA_real_,
+        mean_signed_difference = NA_real_
+      )
+    )
+  }
+
+  common_CpGs %>%
+    mutate(
+      difference = percent_2 - percent_1
+    ) %>%
+    summarise(
+      sample_1 = sample_1,
+      sample_2 = sample_2,
+      n_common_CpGs = n(),
+
+      spearman = cor(
+        percent_1,
+        percent_2,
+        method = "spearman",
+        use = "complete.obs"
+      ),
+
+      pearson = cor(
+        percent_1,
+        percent_2,
+        method = "pearson",
+        use = "complete.obs"
+      ),
+
+      median_abs_difference = median(
+        abs(difference),
+        na.rm = TRUE
+      ),
+
+      mean_abs_difference = mean(
+        abs(difference),
+        na.rm = TRUE
+      ),
+
+      root_mean_square_difference = sqrt(
+        mean(difference^2, na.rm = TRUE)
+      ),
+
+      mean_signed_difference = mean(
+        difference,
+        na.rm = TRUE
+      ),
+
+      mean_sample_1 = mean(
+        sample_1_data$percent_1,
+        na.rm = TRUE
+      ),
+      mean_sample_2 = mean(
+        sample_2_data$percent_2,
+        na.rm = TRUE
+      )
+      
+    )
+}
+
+# create pairwise comparisons
+
+sample_metadata %>% 
+  pull(Sample) -> samples
+
+combn(
+  samples, 2, simplify = FALSE
+) %>% 
+  map_dfr(
+    ~ tibble(
+      sample_1 = .x[1],
+      sample_2 = .x[2]
+    )
+  ) -> sample_pairs
+
+sample_pairs %>%
+  mutate(
+    result = map2(
+      sample_1,
+      sample_2,
+      .progress = TRUE,
+      ~ compare_two_samples(
+        sample_1 = .x,
+        sample_2 = .y
+      )
+    )
+  ) %>%
+    select(result) %>%
+    unnest(result) -> pairwise_comparisons
+
+# create metadata tables to add
+sample_metadata %>%
+  transmute(
+    sample_ID_1 = IDsample,
+    sample_1 = Sample,
+    mushroom_1 = mushroom_id,
+    location_1 = Location,
+    replicate_1 = Replicate,
+    tissue_1 = Tissue
+  ) -> metadata_1
+
+sample_metadata %>%
+  transmute(
+    sample_ID_2 = IDsample,
+    sample_2 = Sample,
+    mushroom_2 = mushroom_id,
+    location_2 = Location,
+    replicate_2 = Replicate,
+    tissue_2 = Tissue
+  ) -> metadata_2
+
+pairwise_comparisons %>%
+  left_join(
+    metadata_1, by = "sample_1"
+  )  %>%
+  left_join(metadata_2,
+  by = "sample_2"
+  ) -> pairwise_comparisons
+
+# save
+write.csv(pairwise_comparisons, here("results", "meDNA", "pairwise_correlation.csv"))
+# Create comparison table
+
+# Create symmetry by inverting comparisons and copying data
+full_comparisons <- bind_rows(
+  pairwise_comparisons %>% select(sample_1, sample_2, pearson),
+  pairwise_comparisons %>% select(sample_1 = sample_2, sample_2 = sample_1, pearson)
+)
+
+# reshape into a matrix
+full_comparisons %>%
+  pivot_wider(names_from = sample_2, values_from = pearson) %>%
+  column_to_rownames("sample_1") %>%
+  as.matrix() -> mat
+#reorder as N2L is shifted to the column end
+mat <- mat[rownames(mat), rownames(mat)]
+
+diag(mat) <- 1 # Fill the diagonal (A vs A) with 1
+mat <- mat[sort(rownames(mat)), sort(colnames(mat))]
+# 3. Plot heatmap with hierarchical clustering
+pheatmap(
+    mat,
+    main = "Pearson Correlation",
+    color = colorRampPalette(c("navy", "white", "red"))(50),
+    display_numbers = TRUE,
+    cluster_rows = FALSE,
+    cluster_cols = FALSE,
+    fontsize = 20          
+)
+```
+
+#exploring whole genome PCA
+```{r, message=FALSE}
+library(data.table)
+
+#convert to correct format
+pca_input <- dcast(
+  meth, IDsample + Tissue + mushroom_id + Location ~ cpg_id,
+  value.var = "percent")
+
+#generate matrix
+rownames(pca_input) <- pca_input$IDsample
+meta <- pca_input[, .(IDsample, Tissue, mushroom_id, Location)]
+X <- as.matrix(pca_input[, -(1:4)])
+
+# Remove columns containing missing values.
+X <- X[, colSums(is.na(X)) == 0]
+
+pca <- prcomp(X, center = TRUE, scale. = FALSE)
+
+# Extract variance explained
+variance_explained <- 100 * pca$sdev^2 / sum(pca$sdev^2)
+pc1_label <- sprintf("PC1 (%.1f%%)", variance_explained[1])
+pc2_label <- sprintf("PC2 (%.1f%%)", variance_explained[2])
+
+scores <- cbind(meta, as.data.frame(pca$x))
+ggplot(scores,
+      aes(PC1, PC2, color = Tissue, shape = Location)) +
+        geom_point(size = 3) + 
+        labs(x = pc1_label, y = pc2_label) +
+        theme_minimal() + 
+        theme(axis.text.x = element_text(angle = 90, hjust = 1,vjust = 0.5)) -> methylation_PCA_plot
+ggsave(here("figures","Figure2","methylation_PCA_exploratory.pdf"),
+       plot = methylation_PCA_plot,
+       width = 8, height = 6, units = "in", dpi = 300)
+```
+
+# retry of PCA
+```{r, message=FALSE}
+
+methylationData.3.QC %>% 
+  mutate(CpG = paste(seqid, start, sep=":")) %>%
+  select(CpG, Sample, Tissue, Location, Replicate2, percent) %>%
+  pivot_wider(values_from = "percent", names_from = "CpG") -> input_pca
+
+input_pca %>%
+  select(Sample, Tissue, Location, Replicate2) -> meta
+
+#convert to matrix
+meth_matrix <- as.matrix(input_pca[, 5:ncol(input_pca)])
+rownames(meth_matrix) <- input_pca$Sample
+
+# transform data
+beta_mat <- meth_matrix / 100
+beta_mat[beta_mat <= 0] = 0.001
+beta_mat[beta_mat >= 1] <- 0.999
+m_mat <- log2(beta_mat / (1 - beta_mat))
+
+#calculate variance and keep most variable sites
+cpg_variances <- colVars(m_mat)
+top_cpgs <- head(order(cpg_variances, decreasing = TRUE), 50000)
+filtered_mat <- m_mat[, top_cpgs]
+
+#pca 
+pca_res <- prcomp(filtered_mat, center = TRUE, scale. = FALSE)
+pca_scores <- as.data.frame(pca_res$x)
+pca_scores$Sample <- rownames(pca_scores)
+
+#carculate variance explained
+var_explained <- (pca_res$sdev^2) / sum(pca_res$sdev^2) * 100
+pc1_lab <- paste0("PC1 (", round(var_explained[1], 1), "% variance")
+pc2_lab <- paste0("PC2 (", round(var_explained[2], 1), "% variance")
+
+plot_data <- left_join(meta, pca_scores, by = "Sample")
+
+ggplot(plot_data, aes(x = PC1, y = PC2, color = Tissue, shape = Location)) +
+  geom_point(size = 3.5, alpha = 0.85) +
+  labs(
+    x = pc1_lab,
+    y = pc2_lab,
+    title = "PCA of top 50,000 variable CpGs",
+    color = "Tissue",
+    shape = "Location") +
+    theme_classic() + 
+    theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+```
+
+
+# attempting to test overlap between each pairwise combination, to check if it is more likely to be similar
+```{r, message=FALSE}
+
+# pivoting table per mushroom
+methylationData.3.QC %>%
+  select(seqid, start, end, location, percent, depth, Location, Tissue, Replicate2) %>%
+  mutate(individual = paste(Location, Replicate2, sep = "_")) %>%
+  pivot_wider(names_from = Tissue, values_from = c(percent, depth), names_sep = "_") -> meth_wide
+
+# add information on pairwise comparisons 
+meth_wide %>%
+  mutate(diff_lamella_spore = abs(percent_lamella - percent_spore)) %>%
+  mutate(diff_lamella_stipe = abs(percent_lamella - percent_stipe)) %>%
+  mutate(diff_spore_stipe = abs(percent_spore - percent_stipe)) %>%
+  filter(!(is.na(diff_lamella_spore) & is.na(diff_lamella_stipe) & is.na(diff_spore_stipe))) -> meth_wide
+
+#convert to long_format of each available pairwise comparison
+meth_wide %>%
+  select(individual, seqid, start, end, Location, Replicate2, location, diff_lamella_spore, diff_lamella_stipe, diff_spore_stipe) %>%
+  pivot_longer(cols = starts_with("diff_"), names_to = "comparison", values_to = "absolute_difference") %>%
+  filter(!is.na(absolute_difference)) %>%
+  mutate(comparison = recode(
+    comparison, 
+    diff_lamella_spore = "Lamella-spore", 
+    diff_lamella_stipe = "Lamella-stipe",
+    diff_spore_stipe = "Spore-stipe")) -> pairwise_long
+
+# summarize pairwise comparisons
+pairwise_long %>% 
+  group_by(individual, Location, Replicate2, comparison) %>%
+  summarise(n_cpg = n(), 
+            median_difference = median(absolute_difference, na.rm = TRUE),
+            mean_difference = mean(absolute_difference, na.rm = TRUE),
+            percent_within_005 = mean(absolute_difference <= 5, na.rm = TRUE),
+            percent_within_010 = mean(absolute_difference <= 10, na.rm = TRUE),
+            percent_within_020 = mean(absolute_difference <= 15, na.rm = TRUE),
+            .groups = "drop") -> pair_summary
+
+``` 
