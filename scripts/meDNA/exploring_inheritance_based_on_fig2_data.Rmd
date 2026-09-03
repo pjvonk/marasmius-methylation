@@ -478,6 +478,7 @@ ggsave(here("figures","Figure2","MethylationDistribution.pdf"),plot = methylatio
 ```{r, message=FALSE}
 library(data.table)
 library(ggplot2)
+library(pheatmap)
 
 # Convert to data.table
 setDT(methylationData.3.QC)
@@ -702,54 +703,19 @@ diag(mat) <- 1 # Fill the diagonal (A vs A) with 1
 mat <- mat[sort(rownames(mat)), sort(colnames(mat))]
 # 3. Plot heatmap with hierarchical clustering
 pheatmap(
-    mat,
-    main = "Pearson Correlation",
-    color = colorRampPalette(c("navy", "white", "red"))(50),
-    display_numbers = TRUE,
-    cluster_rows = FALSE,
-    cluster_cols = FALSE,
-    fontsize = 20          
+      mat,
+      main = "Pearson Correlation",
+      color = colorRampPalette(c("navy", "white", "red"))(50),
+      display_numbers = TRUE,
+      cluster_rows = TRUE,
+      cluster_cols = TRUE,
+      fontsize = 20
 )
-```
-
-#exploring whole genome PCA
-```{r, message=FALSE}
-library(data.table)
-
-#convert to correct format
-pca_input <- dcast(
-  meth, IDsample + Tissue + mushroom_id + Location ~ cpg_id,
-  value.var = "percent")
-
-#generate matrix
-rownames(pca_input) <- pca_input$IDsample
-meta <- pca_input[, .(IDsample, Tissue, mushroom_id, Location)]
-X <- as.matrix(pca_input[, -(1:4)])
-
-# Remove columns containing missing values.
-X <- X[, colSums(is.na(X)) == 0]
-
-pca <- prcomp(X, center = TRUE, scale. = FALSE)
-
-# Extract variance explained
-variance_explained <- 100 * pca$sdev^2 / sum(pca$sdev^2)
-pc1_label <- sprintf("PC1 (%.1f%%)", variance_explained[1])
-pc2_label <- sprintf("PC2 (%.1f%%)", variance_explained[2])
-
-scores <- cbind(meta, as.data.frame(pca$x))
-ggplot(scores,
-      aes(PC1, PC2, color = Tissue, shape = Location)) +
-        geom_point(size = 3) + 
-        labs(x = pc1_label, y = pc2_label) +
-        theme_minimal() + 
-        theme(axis.text.x = element_text(angle = 90, hjust = 1,vjust = 0.5)) -> methylation_PCA_plot
-ggsave(here("figures","Figure2","methylation_PCA_exploratory.pdf"),
-       plot = methylation_PCA_plot,
-       width = 8, height = 6, units = "in", dpi = 300)
 ```
 
 # retry of PCA
 ```{r, message=FALSE}
+library(matrixStats)
 
 methylationData.3.QC %>% 
   mutate(CpG = paste(seqid, start, sep=":")) %>%
@@ -760,7 +726,7 @@ input_pca %>%
   select(Sample, Tissue, Location, Replicate2) -> meta
 
 #convert to matrix
-meth_matrix <- as.matrix(input_pca[, 5:ncol(input_pca)])
+meth_matrix <- as.matrix(select(input_pca, -Sample, -Tissue, -Location, -Replicate2))
 rownames(meth_matrix) <- input_pca$Sample
 
 # transform data
@@ -781,8 +747,8 @@ pca_scores$Sample <- rownames(pca_scores)
 
 #carculate variance explained
 var_explained <- (pca_res$sdev^2) / sum(pca_res$sdev^2) * 100
-pc1_lab <- paste0("PC1 (", round(var_explained[1], 1), "% variance")
-pc2_lab <- paste0("PC2 (", round(var_explained[2], 1), "% variance")
+pc1_lab <- paste0("PC1 (", round(var_explained[1], 1), "% variance)")
+pc2_lab <- paste0("PC2 (", round(var_explained[2], 1), "% variance)")
 
 plot_data <- left_join(meta, pca_scores, by = "Sample")
 
