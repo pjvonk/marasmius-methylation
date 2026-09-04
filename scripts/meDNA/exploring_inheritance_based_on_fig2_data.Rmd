@@ -805,7 +805,7 @@ pairwise_long %>%
 
 ``` 
 
-# determine percentage overlap between 
+# determine percentage overlap between tissues better
 
 ```{r, message=FALSE}
 library(purrr)
@@ -836,15 +836,16 @@ percentage_same_methylation <- function(
       filter(!is.na(percent_1) & !is.na(percent_2)) %>% 
       filter(!(percent_1 == 0 & percent_2 == 0) & !(percent_1 == 100 & percent_2 == 100)) %>%
       summarize(
-        individual_1 = first(individual_1),
-        individual_2 = first(individual_2),
-        same_individual = first(individual_1) == first(individual_2),
-        tissue_1 = first(Tissue_1),
-        tissue_2 = first(Tissue_2),
+        individual_1 = individual_1[1],
+        individual_2 = individual_2[1],
+        same_individual = individual_1[1] == individual_2[1],
+        tissue_1 = Tissue_1[1],
+        tissue_2 = Tissue_2[1],
         total_shared_sites = n(),
         sites_within_pct = sum(abs(percent_1 - percent_2) <= max_absolute_difference),
-        pct_overlap = (sites_within_pct / total_shared_sites)
-      ) -> result
+        pct_overlap = (sites_within_pct / total_shared_sites),
+        pearson = cor(percent_1, percent_2, method = "pearson", use = "complete.obs"),
+        spearman = cor(percent_1, percent_2, method = "spearman", use = "complete.obs")) -> result
     return(result)
 }
 
@@ -877,5 +878,25 @@ ggplot(all_results, aes(x = tissue_2, y = pct_overlap, fill = same_individual)) 
   theme_classic(base_size = 12) -> overlap_boxplot
 
 ggsave(here("figures", "Figure1", "overlap_boxplot_5percent_no_0_100.png"), overlap_boxplot)
-  
+
+#plotting spearman and pearson
+
+ggplot(all_results, aes(x = tissue_2, y = spearman, fill = same_individual)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6, position = position_dodge(0.8)) +
+  geom_point(aes(color = same_individual), position = position_jitterdodge(jitter.width = 0.15, dodge.width = 0.8), size = 2, alpha = 0.8) +
+  stat_compare_means(aes(group = same_individual), method = "wilcox.test", label = "p.format", label.y = max(all_results$pct_overlap, na.rm = TRUE) + 0.001, hide.ns = FALSE) +
+  labs(x = "Lamellae vs", y = "Spearman correlation") +
+  theme_classic(base_size = 12) -> spearman_boxplot
+
+ggsave(here("figures", "Figure1", "spearman_correlation.png"), spearman_boxplot)
+
+ggplot(all_results, aes(x = tissue_2, y = pearson, fill = same_individual)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6, position = position_dodge(0.8)) +
+  geom_point(aes(color = same_individual), position = position_jitterdodge(jitter.width = 0.15, dodge.width = 0.8), size = 2, alpha = 0.8) +
+  stat_compare_means(aes(group = same_individual), method = "wilcox.test", label = "p.format", label.y = max(all_results$pct_overlap, na.rm = TRUE) + 0.001, hide.ns = FALSE) +
+  labs(x = "Lamellae vs", y = "Pearson correlation") +
+  theme_classic(base_size = 12) -> pearson_boxplot
+
+
+ggsave(here("figures", "Figure1", "pearson_correlation.png"), pearson_boxplot)
 ```
