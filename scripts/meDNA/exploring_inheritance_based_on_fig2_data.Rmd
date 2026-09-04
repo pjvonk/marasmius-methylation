@@ -834,7 +834,7 @@ percentage_same_methylation <- function(
     data_sample_1 %>%
       inner_join(data_sample_2, by = "cpg_id", suffix = c("_1", "_2")) %>%
       filter(!is.na(percent_1) & !is.na(percent_2)) %>% 
-      filter(!(percent_1 == 0 & percent_2 == 0) & !(percent_1 == 100 & percent_2 == 100)) %>%
+#      filter(!(percent_1 == 0 & percent_2 == 0) & !(percent_1 == 100 & percent_2 == 100)) %>%
       summarize(
         individual_1 = individual_1[1],
         individual_2 = individual_2[1],
