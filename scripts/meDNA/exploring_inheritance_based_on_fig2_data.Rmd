@@ -737,7 +737,7 @@ m_mat <- log2(beta_mat / (1 - beta_mat))
 
 #calculate variance and keep most variable sites
 cpg_variances <- colVars(m_mat)
-top_cpgs <- head(order(cpg_variances, decreasing = TRUE), 50000)
+top_cpgs <- head(order(cpg_variances, decreasing = TRUE), 10000)
 filtered_mat <- m_mat[, top_cpgs]
 
 #pca 
@@ -816,14 +816,14 @@ library(ggpubr)
 methylationData.3.QC %>%
   mutate(individual = paste(Location, Replicate2, sep = "_")) %>%
   mutate(cpg_id = paste(seqid, start, sep = ":")) %>%
-  select(Sample, cpg_id, percent, Location, Tissue, Replicate2, individual) %>%
+  select(Sample, cpg_id, percent, Location, Tissue, Replicate2, individual, location) %>%
   split(.$Sample) -> sample_data_list
 
 percentage_same_methylation <- function(
     sample_1,
     sample_2,
     data_list = sample_data_list,
-    max_absolute_difference = 5) {
+    max_absolute_difference = 15) {
     
     # transform the data into a usable comparison
     data_sample_1 <- data_list[[sample_1]]
@@ -834,7 +834,7 @@ percentage_same_methylation <- function(
     data_sample_1 %>%
       inner_join(data_sample_2, by = "cpg_id", suffix = c("_1", "_2")) %>%
       filter(!is.na(percent_1) & !is.na(percent_2)) %>% 
-#      filter(!(percent_1 == 0 & percent_2 == 0) & !(percent_1 == 100 & percent_2 == 100)) %>%
+      group_by(location_1) %>%
       summarize(
         individual_1 = individual_1[1],
         individual_2 = individual_2[1],
@@ -866,18 +866,19 @@ pairs <- cross_join(lamella_samples, other_samples)
 
 # run the function
 pairs %>%
-  mutate(results = pmap(list(Sample_1, Sample_2), percentage_same_methylation, .progress = "comparing pairs")) %>%
+  mutate(results = pmap(list(Sample_1, Sample_2), percentage_same_methylation, .progress = TRUE)) %>%
   pull(results) %>%
   list_rbind() -> all_results
 
 ggplot(all_results, aes(x = tissue_2, y = pct_overlap, fill = same_individual)) +
   geom_boxplot(outlier.shape = NA, alpha = 0.6, position = position_dodge(0.8)) +
   geom_point(aes(color = same_individual), position = position_jitterdodge(jitter.width = 0.15, dodge.width = 0.8), size = 2, alpha = 0.8) +
-  stat_compare_means(aes(group = same_individual), method = "wilcox.test", label = "p.format", label.y = max(all_results$pct_overlap, na.rm = TRUE) + 0.001, hide.ns = FALSE) +
-  labs(x = "Lamellae vs", y = "Percentage overlap within 10%") +
+  stat_compare_means(aes(group = same_individual), method = "wilcox.test", label = "p.format", label.y = max(all_results$pct_overlap, na.rm = TRUE) + 0.02, hide.ns = FALSE) +
+  facet_wrap(~ location_1) +
+  labs(x = "Lamellae vs", y = "Percentage overlap within 15%") +
   theme_classic(base_size = 12) -> overlap_boxplot
 
-ggsave(here("figures", "Figure1", "overlap_boxplot_5percent_no_0_100.png"), overlap_boxplot)
+#ggsave(here("figures", "Figure1", "overlap_boxplot_5percent_no_0_100.png"), overlap_boxplot)
 
 #plotting spearman and pearson
 
@@ -885,18 +886,20 @@ ggplot(all_results, aes(x = tissue_2, y = spearman, fill = same_individual)) +
   geom_boxplot(outlier.shape = NA, alpha = 0.6, position = position_dodge(0.8)) +
   geom_point(aes(color = same_individual), position = position_jitterdodge(jitter.width = 0.15, dodge.width = 0.8), size = 2, alpha = 0.8) +
   stat_compare_means(aes(group = same_individual), method = "wilcox.test", label = "p.format", label.y = max(all_results$pct_overlap, na.rm = TRUE) + 0.001, hide.ns = FALSE) +
+  facet_wrap(~ location_1) +
   labs(x = "Lamellae vs", y = "Spearman correlation") +
   theme_classic(base_size = 12) -> spearman_boxplot
 
-ggsave(here("figures", "Figure1", "spearman_correlation.png"), spearman_boxplot)
+#ggsave(here("figures", "Figure1", "spearman_correlation.png"), spearman_boxplot)
 
 ggplot(all_results, aes(x = tissue_2, y = pearson, fill = same_individual)) +
   geom_boxplot(outlier.shape = NA, alpha = 0.6, position = position_dodge(0.8)) +
   geom_point(aes(color = same_individual), position = position_jitterdodge(jitter.width = 0.15, dodge.width = 0.8), size = 2, alpha = 0.8) +
   stat_compare_means(aes(group = same_individual), method = "wilcox.test", label = "p.format", label.y = max(all_results$pct_overlap, na.rm = TRUE) + 0.001, hide.ns = FALSE) +
+  facet_wrap(~ location_1) +
   labs(x = "Lamellae vs", y = "Pearson correlation") +
   theme_classic(base_size = 12) -> pearson_boxplot
 
 
-ggsave(here("figures", "Figure1", "pearson_correlation.png"), pearson_boxplot)
+#ggsave(here("figures", "Figure1", "pearson_correlation.png"), pearson_boxplot)
 ```
