@@ -51,3 +51,4 @@ rsconnect/
 # Input data file
 data/meDNA/methylationData.samples.QC.csv.gz
 data/meDNA/methylationData.samples.QC.old.csv.gz
+data/meDNA/raw_coverage/*
