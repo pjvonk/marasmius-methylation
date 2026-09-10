@@ -237,7 +237,7 @@ write.csv(dunn_res, here("results", "meDNA", "fig1D_significance_test.csv"))
 # Figure 1D with mean percentage instead of all methylated vs non-methylated reads
 ```{r, message=FALSE}
 methylationData.3.QC %>%
-  group_by(Tissue, Location, Replicate2) %>%
+  group_by(Tissue, Location, Replicate2, Sample) %>%
   summarise(n = n(), depth = mean(depth), methylation = mean(percent)) %>%
   mutate(fraction = methylation / 100) %>% 
   ungroup() ->
@@ -810,13 +810,16 @@ pairwise_long %>%
 ```{r, message=FALSE}
 library(purrr)
 library(ggpubr)
+library(stats)
 #start with a function to determine overlap
 
 # I don't want to do modifications on the large dataframe everytime, so I preprocess it.
 methylationData.3.QC %>%
   mutate(individual = paste(Location, Replicate2, sep = "_")) %>%
   mutate(cpg_id = paste(seqid, start, sep = ":")) %>%
-  select(Sample, cpg_id, percent, Location, Tissue, Replicate2, individual, location) %>%
+  mutate(meth_reads = as.integer(depth * percent / 100)) %>%
+  mutate(unmeth_reads = as.integer(depth - meth_reads)) %>%
+  select(Sample, cpg_id, percent, meth_reads, unmeth_reads, Location, Tissue, Replicate2, individual, location) %>%
   split(.$Sample) -> sample_data_list
 
 percentage_same_methylation <- function(
@@ -842,6 +845,7 @@ percentage_same_methylation <- function(
         tissue_1 = Tissue_1[1],
         tissue_2 = Tissue_2[1],
         total_shared_sites = n(),
+        mean_difference = mean(abs(percent_1 - percent_2)),
         sites_within_pct = sum(abs(percent_1 - percent_2) <= max_absolute_difference),
         pct_overlap = (sites_within_pct / total_shared_sites),
         pearson = cor(percent_1, percent_2, method = "pearson", use = "complete.obs"),
@@ -878,6 +882,14 @@ ggplot(all_results, aes(x = tissue_2, y = pct_overlap, fill = same_individual)) 
   labs(x = "Lamellae vs", y = "Percentage overlap within 15%") +
   theme_classic(base_size = 12) -> overlap_boxplot
 
+ggplot(all_results, aes(x = tissue_2, y = mean_difference, fill = same_individual)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6, position = position_dodge(0.8)) +
+  geom_point(aes(color = same_individual), position = position_jitterdodge(jitter.width = 0.15, dodge.width = 0.8), size = 2, alpha = 0.8) +
+  stat_compare_means(aes(group = same_individual), method = "wilcox.test", label = "p.format", label.y = max(all_results$pct_overlap, na.rm = TRUE) + 0.02, hide.ns = FALSE) +
+  facet_wrap(~ location_1) +
+  labs(x = "Lamellae vs", y = "Mean difference per position", title = "Mean difference in CpG methylation within and between mushrooms per genomic context") +
+  theme_classic(base_size = 12) -> mean_difference_boxplot
+
 #ggsave(here("figures", "Figure1", "overlap_boxplot_5percent_no_0_100.png"), overlap_boxplot)
 
 #plotting spearman and pearson
@@ -903,3 +915,4 @@ ggplot(all_results, aes(x = tissue_2, y = pearson, fill = same_individual)) +
 
 #ggsave(here("figures", "Figure1", "pearson_correlation.png"), pearson_boxplot)
 ```
+
