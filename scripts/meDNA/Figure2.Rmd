@@ -195,43 +195,41 @@ methylationData.3.QC <- read_csv(meData_path)
 # Calculate methylated fraction per sample per tissue
 
 methylationData.3.QC %>%
-  mutate(methylated = depth*percent /100) %>%
-  mutate(notMethylated = depth - methylated) %>%
-  group_by(Sample) %>%
-  summarise(methylated = sum(methylated), notMethylated = sum(notMethylated)) %>%
-  mutate(fraction = methylated /(notMethylated+methylated))->
-  sum
+  group_by(Tissue, Location, Replicate2, Sample) %>%
+  summarise(n = n(), depth = mean(depth), methylation = mean(percent)) %>%
+  mutate(fraction = methylation / 100) %>% 
+  ungroup() %>%
+  mutate(Tissue = factor(Tissue, levels = c("stipe", "lamella", "spore"))) ->
+  methylationData.3.QC.distribution
 
-sum %>%
-  inner_join(samples.ring.methyl.df) -> sum_wide
-
-sum_wide %>%
-  ggplot(aes(x = Tissue, y = fraction,fill = Tissue,)) +
+methylationData.3.QC.distribution %>%
+  ggplot(aes(x = Tissue, y = fraction, fill = Tissue,)) +
   geom_boxplot(outliers = FALSE)+
-  geom_jitter(width = 0.1,mapping = aes(shape =Location)) + 
+  geom_jitter(width = 0.1, mapping = aes(shape = Location)) + 
   theme_light()+
   scale_fill_manual(values = colors) ->
-  fig1D
+  fig1D_fraction
 
-ggsave(here("figures","Figure1","fig1D.pdf"),
-       plot = fig1D,
-        width = 4, height = 5, units = "in", dpi = 300)
+ggsave(here("figures","Figure1","fig1E.pdf"),
+       plot = fig1D_fraction,
+        width = 6.5, height = 5, units = "in", dpi = 300)
 
 # Perform significance testing for figure 1D
 # Test variance
-levene_test(fraction ~ Tissue, data = sum_wide) # p>0.05 so we assume homogeneity of Variance
+levene_test(fraction ~ Tissue, data = methylationData.3.QC.distribution) # p>0.05 so we assume homogeneity of Variance
 
 # Perform ANOVA and test for normality 
-model <- aov(fraction ~ Tissue, data = sum_wide)
+model <- aov(fraction ~ Tissue, data = methylationData.3.QC.distribution)
 res <- residuals(model)
 shapiro.test(res) # p<0.05 so no normality. Perform non-parametric test instead
 
 # Non-parametric test
-kruskal.test(fraction ~ Tissue, data = sum_wide) # p < 0.001
+kruskal.test(fraction ~ Tissue, data = methylationData.3.QC.distribution) # p < 0.001
 # post-hoc dunns test
-dunn_res <- sum_wide %>%
+dunn_res <- methylationData.3.QC.distribution %>%
   dunn_test(fraction ~ Tissue, p.adjust.method = "BH")
-write.csv(dunn_res, here("results", "meDNA", "fig1D_significance_test.csv"))
+
+write.csv(dunn_res, here("results", "meDNA", "fig1E_significance_test.csv"))
 ```
 
 
@@ -249,6 +247,14 @@ methylationData.3.QC %>%
   group_by(location,Tissue,Location,Replicate2) %>% 
   summarise(n = n(), depth = mean(depth), methylation = mean(percent)) ->
   methylationData.3.QC.annotation.distribution
+
+# get mean methylation
+methylationData.3.QC.annotation.distribution %>%
+  select(Tissue,Location,Replicate2,methylation,location) %>% # Select relevant variables
+  mutate(IDsample = paste(Location,Replicate2,Tissue,sep = "_")) %>% # Create sample identifier
+  mutate(fraction = methylation /100) %>%
+  group_by(location) %>%
+  summarize(fraction = mean(fraction))-> fig2A_data
 
 # Plot Figure 2A
 methylationData.3.QC.annotation.distribution %>%
@@ -268,6 +274,7 @@ ggsave(here("figures","Figure2","fig2A.pdf"),
 
 # Plot Figure 2C
 methylationData.3.QC.annotation.distribution %>%
+  mutate(Tissue = factor(Tissue, levels = c("stipe", "lamella", "spore"))) %>%
   select(Tissue,Location,Replicate2,methylation,location) %>% # Select relevant variables
   mutate(IDsample = paste(Location,Replicate2,Tissue,sep = "_")) %>% # Create sample identifier
   mutate(fraction = methylation /100)%>% #Convert methylation to fraction
@@ -297,7 +304,20 @@ methylationData.3.QC.annotation.distribution %>%
     mutate(fraction = methylation /100) %>%
     select(-methylation) %>%
     pivot_wider(values_from = "fraction", names_from = "location" ) -> outliers  
-  
+
+# calculate correlation between TE and GeneBody methylation
+methylationData.3.QC.annotation.distribution %>%
+  filter(location != "Intergenic") %>%
+  select(location, Tissue, Location, Replicate2, methylation) %>%
+  pivot_wider(names_from = location, values_from = methylation) -> corr_table
+
+cor.test(
+  corr_table$GeneBody,
+  corr_table$TE,
+  method = "spearman"
+)
+
+
 # Plot figure 2
   methylationData.3.QC.annotation.distribution %>% 
     select(Tissue,Location,Replicate2,methylation,location) %>%
