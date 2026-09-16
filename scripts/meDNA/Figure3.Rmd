@@ -87,7 +87,7 @@ gff3Colnames =c("seqid", "source",
   TEFile <- here("annotation","Maror2.repeatmasker.rmlib2.3.gff")
 
   # Read in TE dataframe from gff file
-  TEdf =    read_tsv(file = TEFile, col_names = gff3Colnames,comment = "#") %>% separate(attributes, into = c("ID","target"), sep = ";") %>%
+  TEdf <- read_tsv(file = TEFile, col_names = gff3Colnames,comment = "#") %>% separate(attributes, into = c("ID","target"), sep = ";") %>%
     mutate(ID = as.numeric(gsub("ID=","",ID))) %>%
     separate(target, into = c("Target","motif",
                               "motifStart","motifStop"),
@@ -212,7 +212,7 @@ methylationData.3.QC <- read_csv(meData_path)
 ###  TE analysis
 
 ```{r }
-# Filter methylation information on TE locations
+# reconfigure TEdf
 TEdf %>% 
   mutate(motifStart = as.numeric(motifStart)) %>%
   mutate(motifStop = as.numeric(motifStop)) %>%
@@ -223,12 +223,12 @@ TEdf %>%
 TEdf %>% select(TEclass,seqid,TE_ID2) -> 
   TE.info
 
-# inner join on TE_ID2
+# Select all TEs in the methylation data on TE_ID2
 methylationData.3.QC %>% 
   select(-TEclass) %>%
   filter(location == "TE") %>%
   inner_join(TE.info) ->
-  methylationData.3.QC.TE ##5649 TEs
+  methylationData.3.QC.TE ##5986 TEs
 ```
 
 ### Data filtering
@@ -245,7 +245,7 @@ methylationData.3.QC.TE.summary %>%
   group_by(TE_ID2,Tissue) %>%
   summarise(nrOfExamples = n()) -> methylationData.3.QC.TE.summary.2
 
-# Remove TEs that are not included in all 3 of a mushroom
+# Remove TEs where I do not have have data of all 3 tissues
 methylationData.3.QC.TE.summary.2 %>%
   group_by(Tissue) %>%
   summarise(n = max(nrOfExamples)) %>%
@@ -254,26 +254,26 @@ methylationData.3.QC.TE.summary.2 %>%
   summarise(n = n()) %>%
   filter(n == 3)  %>%
   select(TE_ID2)->
-  TE.covered ##5616 TEs
+  TE.covered # 5951 TEs
 
 # And remove TEs that are not covered by all samples
 methylationData.3.QC.TE.summary %>%
   inner_join(TE.covered) %>%
   pivot_wider(values_from = "percent",names_from = c("Location","Replicate2","Tissue")) %>%
-  column_to_rownames(var = "TE_ID2")%>%
-  drop_na()->                     # Removes any row with at least one NA->
-  methylationData.3.QC.TE.wide ##3843 TEs
+  column_to_rownames(var = "TE_ID2") ->
+#  drop_na()                    # Removes any row with at least one NA-> # Removed because too strict
+  methylationData.3.QC.TE.wide # 4074 TEs
 
 ```
 
 #### Filtering on TEs with sufficient informative sites (>10 CpG sites) and covered by at least 2 tissues
 ```{r}
 # Now we test for every TE if it is differentially methylated by location, tissue or replicate.
-# Extract unique TEs in methylation data: 5649 of 8893 TEs included
+# Extract unique TEs in methylation data: 5986 of 9440 TEs included
 methylationData.3.QC.TE %>% distinct(TE_ID2) ->
   TE.unique
 
-# detemerine for every tissue the methylation level at each TE start position
+# calculate the mean methylation for each position in a TE
 methylationData.3.QC.TE %>%
   select(TE_ID2,Sample,Tissue,start,percent) %>%
   ungroup() %>%
@@ -290,16 +290,17 @@ TE.summary.all %>%
   group_by(TE_ID2) %>%
   summarise(n = n()) %>%
   filter(n >=2) ->
-  TE.filtered # 3185 TEs
+  TE.filtered # 3286 TEs
 
-# Filter to select only TEs with >10 unique positions covered and count how many positions they cover
-TE.summary.all %>% filter(TE_ID2 %in% TE.filtered$TE_ID2) %>%
+# Filter to select only TEs with >10 unique positions covered
+TE.summary.all %>% 
+  filter(TE_ID2 %in% TE.filtered$TE_ID2) %>%
   ungroup() %>%
   distinct(TE_ID2,start) %>%
   group_by(TE_ID2) %>%
   summarise(n = n()) %>%
-  filter(n > 10) -> # Consider changing to less stringent filter
-  TE.filtered.nCpG.nObs # Final TEs tested 2965
+  filter(n >= 10) -> # Changed to minimum 10 to be consistent
+  TE.filtered.nCpG.nObs # Final TEs tested 3047
 
 ```
 
@@ -453,7 +454,7 @@ lmm_results.TE.Tissue %>% filter(significant == "Yes") %>%
   arrange(adj_pvalue) ->
   lmm_results.TE.Tissue.significant
 
-TE_tissue_DE = intersect(lmm_results.TE.Tissue.significant$TE_ID2,as.numeric( rownames(methylationData.3.QC.TE.wide))) 
+TE_tissue_DE = intersect(lmm_results.TE.Tissue.significant$TE_ID2,as.numeric(rownames(methylationData.3.QC.TE.wide))) 
 
 methylationData.3.QC.TE.wide[as.character(TE_tissue_DE),]->
 methylationData.3.QC.TE.sig.wide 
@@ -514,13 +515,6 @@ clusters %>%
   group_by(cluster, Tissue) %>%
   summarise(mean = mean(percent), sd = sd(percent))->
   clusters.Tissue.summary
-
-
-clusters.Tissue.summary %>% group_by(cluster) %>%
-  summarise(overallMean = mean(mean)) %>%
-  arrange(overallMean) %>%
-  mutate(clusterOrder = as.factor(row_number()))->
-  cluster.order
   
 
 clusters %>%  
@@ -553,8 +547,7 @@ clusters.Tissue.summary %>%
 clusters.summary
 
 clusters.Tissue.summary %>%
-  inner_join(clusters.count.summary) %>%
-  inner_join(cluster.order)->
+  inner_join(clusters.count.summary)->
 clusters.summary
   
 ha = HeatmapAnnotation(
@@ -582,7 +575,10 @@ clusters %>%
   group_by(TE_ID2,Tissue,Sample,cluster ) %>%
   summarise(percent = mean(percent) )%>%
   inner_join(clusters.summary) %>%
-  ggplot(aes(x = clusterOrder, y = percent, fill = Tissue)) +
+  mutate(Tissue = factor(Tissue, levels = c("stipe", "lamella", "spore"))) %>%
+  mutate(cluster = as.factor(cluster)) %>%
+  mutate(fraction = percent / 100) %>%
+  ggplot(aes(x = cluster, y = fraction, fill = Tissue)) +
   geom_boxplot() +
   theme_light() +
   labs(
@@ -598,7 +594,7 @@ clusters %>%
   scale_fill_manual(values = colors) -> distributionPerClusterPlot
    
 ggsave(here("figures","Figure3","Fig3C.pdf"),
-       plot = distributionPerClusterPlot ,width = 8, height = 6, units = "in", dpi = 300)    
+       plot = distributionPerClusterPlot ,width = 10, height = 6, units = "in", dpi = 300)    
 
 ```
 
