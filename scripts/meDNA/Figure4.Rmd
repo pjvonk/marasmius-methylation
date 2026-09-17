@@ -172,34 +172,10 @@ res.df.all %>% ggplot(aes(x = log2FoldChange, y = -log10(padj), color = DE, shap
   theme_minimal() +
   scale_color_manual(values = c("Significant" = "#4472C4","Not Significant" = "grey" )) -> volcano_plot
 
-ggsave(here("figures","Figure5","Fig5B.pdf"),
+ggsave(here("figures","Figure4","Fig4B.pdf"),
        width = 7, height = 4,plot = volcano_plot)
 
 library(ggrepel)
-
-res.df.all %>% 
-  ggplot(aes(x = log2FoldChange, y = -log10(padj), color = DE)) +
-  geom_point(size = 2) +
-  # Add labels only for Significant points
-  geom_text_repel(
-    data = subset(res.df.all, DE == "Significant"),
-    aes(label = rownames(subset(res.df.all, DE == "Significant"))),
-    size = 3,
-    max.overlaps = 20, # Adjust this if you have many points
-    box.padding = 0.5, 
-    point.padding = 0.3,
-    show.legend = FALSE
-  ) +
-  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "red") +
-  geom_vline(xintercept = c(-2, 2), linetype = "dashed", color = "red") +
-  labs(title = "Volcano plot: Stipe vs Lamella",
-       x = "Log2 Fold Change",
-       y = "-Log10 Adjusted P-value") +
-  theme_minimal() +
-  scale_color_manual(values = c("Significant" = "#4472C4","Not Significant" = "grey" )) -> volcano_plot_with_labels
-
-ggsave(here("figures","Figure5","Fig5B_with_labels.pdf"),
-       width = 7, height = 4,plot = volcano_plot_with_labels)
 
 res.df.sig <- res.df.all[abs(res.df.all$log2FoldChange) > 2 & res.df.all$padj<0.05 , ]
 
