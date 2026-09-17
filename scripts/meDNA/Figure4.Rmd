@@ -313,7 +313,7 @@ p_active <- ggplot(df_active, aes(x = family_plot, y = tpm, fill = tissue)) +
   )
 
 ggsave(here("figures","Figure4","Fig4C.pdf"),
-       width = 4, height = 5, plot = p_active)
+       width = 3.2, height = 5, plot = p_active)
 #### Fig S2
 #### Scatter plot of the correlation between TPM and copy number
 ## TO DO get file from Markus
