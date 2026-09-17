@@ -362,7 +362,7 @@ res.df.all %>%
   res.df.all
 
 # Write to excel
-write.xlsx(res.df.all, here("results", "RNA", "Supplementary_table_4.xlsx"))
+write.xlsx(res.df.all, here("results", "RNA", "Supplementary_table_4_Gene_expression.xlsx"))
 
 # Make volcano plot of expression
 
@@ -387,7 +387,7 @@ res.df.sig <- res.df.all[abs(res.df.all$log2FoldChange) > 2 & res.df.all$padj<0.
 
 
 
-# Gene set enrichment; Figure 4D/E
+# Gene set enrichment; Figure 5D/E
 
 ```{r}
 annotation.mRNA.GO.df %>%
@@ -439,12 +439,12 @@ enricher(res.df.sig.lamella$XM_ID,
 dotplot.lamellae <- dotplot(GO_enrichment.lamella, showCategory=20) 
 dotplot.stipe <- dotplot(GO_enrichment.stipe, showCategory=20) 
 
-ggsave(here("figures", "Figure4", "Fig4D.pdf"), plot = dotplot.stipe, width = 6, height=6)
-ggsave(here("figures", "Figure4", "Fig4E.pdf"), plot = dotplot.lamellae, width = 6, height=6)
+ggsave(here("figures", "Figure5", "Fig5D.pdf"), plot = dotplot.stipe, width = 6, height=6)
+ggsave(here("figures", "Figure5", "Fig5E.pdf"), plot = dotplot.lamellae, width = 6, height=6)
 ```
 
 
-## Check with methylated samples; Figure 4A
+## Check with methylated samples; Figure 5A
 
 ```{r}
 
@@ -481,7 +481,7 @@ abundance_df.2 %>%
   theme(axis.text.x = element_text(angle = 90, hjust = 1)) ->
   violin_rna_abundance
 ###plot abundance
-ggsave(here("figures", "SuppFigures", "supplemental_figure_RNA_abundance.pdf"), width=8, height=8)
+ggsave(here("figures", "SuppFigures", "supplemental_figure_3_RNA_abundance.pdf"), width=8, height=8)
   
   
 ###Added to define required variable
@@ -538,7 +538,7 @@ abundance_df.2 %>%
   
 
 
-Figure4A <- abundance_df.3 %>%
+Figure5A <- abundance_df.3 %>%
   filter(Tissue != "spore") %>%
   filter(!is.na(Location)) %>% 
   mutate(methylationLevel = factor(methylationLevel, levels = c("Nothing","Low","Medium","High","All"))) %>%
@@ -549,7 +549,7 @@ Figure4A <- abundance_df.3 %>%
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 60, hjust = 1))
 
-ggsave(here("figures", "Figure4", "Fig4A.pdf"), Figure4A, width=8, height=5)
+ggsave(here("figures", "Figure5", "Fig5A.pdf"), Figure5A, width=8, height=5)
 
 
 ```
