@@ -21,6 +21,11 @@ library(here)
 library(ggrepel)
 library(patchwork)
 library(openxlsx)
+require(reshape)
+require(dplyr)
+require(ggplot2)
+require(forcats)
+require(ggh4x)
 
 #Bioconductor packages
 library(clusterProfiler)
@@ -185,10 +190,187 @@ res.df.sig <- res.df.all[abs(res.df.all$log2FoldChange) > 2 & res.df.all$padj<0.
 
 ```
 
-
+# Figures 4A and C
 ```{r}
 # Add code Markus and supplementary data.
+te_tpm <- read.delim(here("data", "RNA", "repeats", "salmon", "salmon.merged.gene_tpm.tsv"), row.names=1)
 
+df <- melt(te_tpm)
+colnames(df) <- c("family", "sample", "tpm")
+df$sample <- as.character(df$sample)
+
+# Add tissue
+df <- df %>%
+  mutate(
+    mushroom = substr(sample, 1, nchar(sample) - 1),
+    tissue = if_else(
+      substr(sample, nchar(sample), nchar(sample)) == "S",
+      "stipe",
+      "lamellae"
+    )
+  )
+
+#### Fig 4A
+#### Plot all families
+#### divided by class and 
+#### summarizing lowly expressed families
+cutoff <- 10000  # Minimum average tpm
+
+df2 <- df %>%
+  group_by(family) %>%
+  mutate(order_tpm = median(tpm, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(family2 = ifelse(order_tpm < cutoff, "Other", family)) %>%
+  mutate(family2 = fct_reorder(family2, order_tpm, .desc = TRUE)) %>%
+  mutate(family2 = fct_relevel(family2, "Other", after = Inf))
+
+# Add the Class.
+df2 <- df2 %>%
+  mutate(
+    Class = ifelse(
+      grepl("LTR|Copia|Gypsy|Ngaro|LINE", family, ignore.case = TRUE),
+      "Class I",
+      "Class II"
+    )
+  )
+
+# Add the number of Other families to the label.
+other_counts <- df2 %>%
+  filter(grepl("^Other", family2)) %>%   # matches "Other" or "Other (n = X)"
+  group_by(Class) %>%
+  summarise(n = n_distinct(family), .groups = "drop")
+df2 <- df2 %>%
+  left_join(other_counts, by = "Class") %>%
+  mutate(
+    family_plot = ifelse(
+      grepl("^Other", family2),
+      paste0("Other (n = ", n, ")"),
+      as.character(family2)
+    )
+  ) %>%
+  group_by(Class, family_plot) %>%
+  mutate(order_tpm = sum(tpm, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(family_plot = fct_reorder(family_plot, order_tpm, .desc = TRUE)) %>%
+  mutate(family_plot = fct_relevel(family_plot, grep("^Other", levels(family_plot), value = TRUE), after = Inf)) %>%
+  mutate(tissue = factor(tissue, levels = c("stipe", "lamellae")))
+
+p_all <- ggplot(df2, aes(x = family_plot, y = tpm, fill = tissue)) +
+  geom_boxplot() +
+  scale_fill_manual(values = c("stipe" = "#96c176ff", "lamellae" = "#cf9ddbff")) +
+  facet_grid2(~Class, scales = "free_x", space = "free_x",
+              strip = strip_themed(
+                background_x = elem_list_rect(
+                  fill = c("Class I" = "#e69f00ff",
+                           "Class II" = "#56b4e9ff")))) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = c(0.98, 0.98),  # x, y in [0–1] coordinates
+        legend.justification = c(1, 1),    # anchor legend's top-right corner
+        legend.title = element_blank()) +
+  labs(
+    x = NULL,
+    y = "TPM",
+    fill = "Tissue")
+
+ggsave(here("figures","Figure4","Fig4A.pdf"),
+       width = 8, height = 4,plot = p_all)
+
+#### Fig 4C
+#### Plot the families shown to be active by Hiltunen et al (2022) PNAS.
+active <- c("MarorhAT-10","MarorhAT-11","MarorhAT-12","MarorhAT-4","MarorLINE-5","MarorLINE-6","MarorLINE-7","MarorTcMar-21")
+
+df_active <- df %>%
+  mutate(group = case_when(
+    family %in% active  ~ "Active",
+    TRUE                ~ NA_character_
+  )) %>%
+  filter(!is.na(group)) %>%
+  group_by(family) %>%
+  mutate(order_tpm = sum(tpm, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(group = "Known active") %>%
+  mutate(family_plot = fct_reorder(family, order_tpm, .desc = TRUE)) %>%
+  mutate(tissue = factor(tissue, levels = c("stipe", "lamellae")))
+  
+p_active <- ggplot(df_active, aes(x = family_plot, y = tpm, fill = tissue)) +
+  geom_boxplot() +
+  facet_grid2(~group, scales = "free_x", space = "free_x",
+              strip = strip_themed(
+                background_x = elem_list_rect(
+                  fill = c("Active" = "lightgray")))) +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = c(0.98, 0.98),  # x, y in [0–1] coordinates
+    legend.justification = c(1, 1),    # anchor legend's top-right corner
+    legend.title = element_blank()) +
+  scale_fill_manual(values = c("stipe" = "#96c176ff", "lamellae" = "#cf9ddbff")) +
+  labs(
+    x = NULL,
+    y = "TPM",
+    fill = "Tissue"
+  )
+
+ggsave(here("figures","Figure4","Fig4C.pdf"),
+       width = 4, height = 5, plot = p_active)
+#### Fig S2
+#### Scatter plot of the correlation between TPM and copy number
+## TO DO get file from Markus
+te_cn <- read.delim("Y:/Research/Marasmius_epigenetics/R-analysis/TEs.cn.txt", header = FALSE)
+colnames(te_cn) <- c("family","copy_number")
+
+df2 <- df2 %>%
+  left_join(te_cn, by = "family")
+
+scatter_df <- df2 %>%
+  group_by(family, copy_number, Class) %>%
+  summarise(avg_tpm = mean(tpm, na.rm = TRUE), .groups = "drop")
+
+# Compute correlation test once
+cor_res <- cor.test(scatter_df$copy_number,
+                    scatter_df$avg_tpm,
+                    use = "complete.obs",
+                    method = "spearman")
+
+p_scat <- ggplot(scatter_df, aes(x = copy_number, y = avg_tpm, col = Class)) +
+  geom_point(alpha = 0.8) +
+  geom_smooth(method = "lm", se = TRUE, color = "black") +
+  scale_x_log10() +
+  scale_y_log10(labels = scales::label_number()) +
+  scale_color_manual(values = c(
+    "Class I" = "#e69f00ff",
+    "Class II" = "#56b4e9ff"
+  )) +
+  annotate(
+    "text",
+    x = 5,
+    y = max(scatter_df$avg_tpm)*0.8,
+    label = paste0(
+      "Spearman rho = ", round(cor_res$estimate, 2),
+      "\n p = ", signif(cor_res$p.value, 3)
+    ),
+    hjust = 0
+  ) +
+  theme_bw() +
+  theme(#legend.position = "none",
+        legend.position = c(0.98, 0.98),  # x, y in [0–1] coordinates
+        legend.justification = c(1, 1),    # anchor legend's top-right corner
+        legend.title = element_blank()) +
+  labs(x = "Est. copy number",
+       y = "TPM")
+
+#### Calculate the quantiles of TE expression.
+#### These numbers go into the Results section.
+
+# Use a quantile-based approach.
+avg <- df %>%
+  group_by(family) %>%
+  summarise(avg_tpm = mean(tpm, na.rm = TRUE))
+
+quantile(avg$avg_tpm, probs = c(0.25, 0.5, 0.75))
+# 25%        50%        75% 
+# 9.24634  180.87903 1766.66347
 
 
 ```
