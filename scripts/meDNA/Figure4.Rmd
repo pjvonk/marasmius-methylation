@@ -340,7 +340,7 @@ scatter_df %>%
   geom_point() +
   geom_smooth(method = "lm", se = TRUE, color = "black") +
   scale_x_log10() +
-  stat_cor(inherit.aes = FALSE, aes(x = copy_number, y = log2_tpm), method = "spearman") +
+  stat_cor(aes(group = 1), method = "spearman") +
   theme_classic() +
   labs(x = "Est. copy number", y = "Log2(TPM+1)") -> p_scat
 
