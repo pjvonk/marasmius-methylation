@@ -26,6 +26,7 @@ require(dplyr)
 require(ggplot2)
 require(forcats)
 require(ggh4x)
+library(ggpubr)
 
 #Bioconductor packages
 library(clusterProfiler)
@@ -317,7 +318,7 @@ ggsave(here("figures","Figure4","Fig4C.pdf"),
 #### Fig S2
 #### Scatter plot of the correlation between TPM and copy number
 ## TO DO get file from Markus
-te_cn <- read.delim("Y:/Research/Marasmius_epigenetics/R-analysis/TEs.cn.txt", header = FALSE)
+te_cn <- read.delim(here("data", "RNA", "repeats", "salmon", "TEs.cn.txt"), header = FALSE)
 colnames(te_cn) <- c("family","copy_number")
 
 df2 <- df2 %>%
@@ -333,35 +334,18 @@ cor_res <- cor.test(scatter_df$copy_number,
                     use = "complete.obs",
                     method = "spearman")
 
-p_scat <- ggplot(scatter_df, aes(x = copy_number, y = avg_tpm, col = Class)) +
-  geom_point(alpha = 0.8) +
+scatter_df %>% 
+  mutate(log2_tpm = log2(avg_tpm+1)) %>%
+  ggplot(aes(x = copy_number, y = log2_tpm, colour = Class)) +
+  geom_point() +
   geom_smooth(method = "lm", se = TRUE, color = "black") +
   scale_x_log10() +
-  scale_y_log10(labels = scales::label_number()) +
-  scale_color_manual(values = c(
-    "Class I" = "#e69f00ff",
-    "Class II" = "#56b4e9ff"
-  )) +
-  annotate(
-    "text",
-    x = 5,
-    y = max(scatter_df$avg_tpm)*0.8,
-    label = paste0(
-      "Spearman rho = ", round(cor_res$estimate, 2),
-      "\n p = ", signif(cor_res$p.value, 3)
-    ),
-    hjust = 0
-  ) +
-  theme_bw() +
-  theme(#legend.position = "none",
-        legend.position = c(0.98, 0.98),  # x, y in [0–1] coordinates
-        legend.justification = c(1, 1),    # anchor legend's top-right corner
-        legend.title = element_blank()) +
-  labs(x = "Est. copy number",
-       y = "TPM")
+  stat_cor(inherit.aes = FALSE, aes(x = copy_number, y = log2_tpm), method = "spearman") +
+  theme_classic() +
+  labs(x = "Est. copy number", y = "Log2(TPM+1)") -> p_scat
 
-ggsave(here("figures","SuppFigures","FigS2.pdf"),
-       width = 5, height = 5, plot = p_scat)
+ggsave(here("figures","Figure4","Fig4E.pdf"),
+       width = 6, height = 5, plot = p_scat)
 
 #### Calculate the quantiles of TE expression.
 #### These numbers go into the Results section.
@@ -377,3 +361,60 @@ quantile(avg$avg_tpm, probs = c(0.25, 0.5, 0.75))
 
 
 ```
+
+# plot relationship methylation of TE and TPM of TE
+```{r}
+
+# Load methylation data
+# Data can be obtained from ###INSERT DOI#####
+meData_path <- here("data", "meDNA", "methylationData.samples.QC.csv.gz")
+
+# Read in the data, read_csv automatically handles the decompression
+# Data consists of every position of every sample that is considered in the final dataset. 
+methylationData.3.QC <- read_csv(meData_path)
+
+# process to get methylation per TE family 
+methylationData.3.QC %>%
+  select(seqid, start, location, TE_ID2, TEclass, percent, Sample, Location, Replicate, Tissue) %>%
+  mutate(TEclass = paste0("Maror", TEclass)) %>%
+  mutate(fraction = percent / 100) %>%
+  filter(location == "TE", TEclass %in% df2$family, Tissue != "spore") %>%
+  group_by(TEclass, Tissue) %>%
+  summarise(methylation = mean(fraction, na.rm = TRUE)) -> mean_methylation_df
+
+# calculate average tpm of family by tissue
+df2 %>%
+  select(family, sample, tpm, tissue, Class) %>%
+  dplyr::rename(TEclass = family, Tissue = tissue) %>% # renaming to fit syntax of methylation df
+  mutate(Tissue = recode(Tissue, "lamellae" = "lamella")) %>%
+  group_by(TEclass, Tissue) %>% 
+  summarise(tpm = mean(tpm, na.rm = TRUE)) %>%
+  mutate(log2tpm = log2(tpm+1))-> mean_tpm_df
+
+# group the data 
+mean_methylation_df %>%
+  inner_join(mean_tpm_df) -> scatter_tpm_methylation_df 
+
+# calculate spearman correlation per tissue
+scatter_tpm_methylation_df %>%
+  group_by(Tissue) %>%
+  summarise(
+    rho = cor(methylation, log2tpm, method = "spearman"),
+    p = cor.test(methylation, log2tpm, method = "spearman")$p.value
+  )
+
+scatter_tpm_methylation_df %>%
+  ggplot(aes(x = methylation, y = log2tpm, colour = Tissue)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = TRUE) +
+  stat_cor(aes(colour = Tissue), method = "spearman", label.x.npc = 0.98, hjust = 1) +
+  scale_colour_manual(values = c("stipe" = "#96c176ff", "lamella" = "#cf9ddbff")) +
+  theme_classic() +
+  labs(x = "fraction_methylated", y = "Log2(TPM + 1)") -> scatter_meth_tpm
+
+ggsave(here("figures", "Figure4", "Fig4D.pdf"), scatter_meth_tpm, width = 6, height = 5, units = "in", dpi = 300)
+
+
+
+```
+
