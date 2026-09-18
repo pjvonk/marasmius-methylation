@@ -614,7 +614,20 @@ for(gene in unique(methylationData.3.QC.mRNA.filtered.2$Name)){
 }
 
 # TO DO: Write significant change in methylation to table
+# Extract pvalues 
+gene_pvalues_methylation = list()
+for(gene in methylationData.3.QC.mRNA.filtered.2){
+  data.frame(
+    pvalue = dist.list.gene.tissue[[gene]][["pvalue"]],
+    gene_name = dist.list.gene.tissue[[gene]][["Name"]]
+  ) -> gene_pvalues_methylation[[as.character(gene)]]
+}
 
+# adjust pvalues and set significance
+bind_rows(gene_pvalues_methylation) %>%
+  mutate(adj_pvalue = p.adjust(pvalue, method = "BH")) %>%
+  mutate(significant = "No") %>%
+  mutate(significant = replace(significant, adj_pvalue < (0.0001), "Yes")) -> lmm_results.gene.methylation
 
 write.xlsx(table_S4, here("results", "RNA", "Supplementary_table_4_Gene_expression.xlsx"))
 ```
