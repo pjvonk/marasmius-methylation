@@ -641,9 +641,9 @@ table_S4 %>%
 write.xlsx(table_S4, here("results", "RNA", "Supplementary_table_4_Gene_expression.xlsx"))
 
 # test correlation only on DEGs, otherwise small changes my expand 
-DEG_table <- table_S4 
+DEG_table <- table_S4 %>% filter(DE == "Significant")
 # test correlation of methylation and expression
-cor.test(DEG_table$log2FoldChange, DEG_table$change_methylation, methylation = "spearman", use = "complete.obs")
+cor.test(DEG_table$log2FoldChange, DEG_table$change_methylation, method = "spearman", use = "complete.obs")
 
 #calculate for upregulated in stipe / lamellae.
 DEG_table %>% # note: consider filtering on DEGS
@@ -652,9 +652,9 @@ DEG_table %>% # note: consider filtering on DEGS
 DEG_table %>%
   filter(log2FoldChange > 0) -> DEG_table_up_stipe
 
-cor.test(DEG_table_up_lamella$log2FoldChange, DEG_table_up_lamella$change_methylation, methylation = "spearman", use = "complete.obs")
+cor.test(DEG_table_up_lamella$log2FoldChange, DEG_table_up_lamella$change_methylation, method = "spearman", use = "complete.obs")
 
-cor.test(DEG_table_up_stipe$log2FoldChange, DEG_table_up_stipe$change_methylation, methylation = "spearman", use = "complete.obs")
+cor.test(DEG_table_up_stipe$log2FoldChange, DEG_table_up_stipe$change_methylation, method = "spearman", use = "complete.obs")
 
 
 # plot the relationships
