@@ -559,7 +559,7 @@ ggsave(here("figures", "Figure5", "Fig5A.pdf"), Figure5A, width=8, height=5)
 # Create supplementary table with methylation and expression data
 ```{r}
 
-# reformat methylation_data
+# reformat methylation_data for the sample
 methylation_wide <- methylationData.3.QC.mRNA.Name.Tissue.summary %>%
   mutate(fraction = percent / 100) %>%
   select(Name, Tissue, fraction) %>%
@@ -575,8 +575,8 @@ table_S4 <- res.df.all %>%
 methylationData.3.QC.mRNA %>%
   filter(Tissue != "spore") %>%
   group_by(Name, Sample, Tissue) %>%
-  summarize(n = n()) %>%
-  filter (n >= 10) %>%
+  summarize(n_covered = n()) %>%
+  filter (n_covered >= 10) %>%
   inner_join(methylationData.3.QC.mRNA, by = join_by(Name, Sample, Tissue)) -> methylationData.3.QC.mRNA.filtered.1
 # This reduced gene count to 12936
 
@@ -586,22 +586,25 @@ methylationData.3.QC.mRNA.filtered.1 %>%
   summarise(n_samples = n_distinct(Sample), .groups = "drop") %>%
   filter(n_samples >= 3) %>%
   group_by(Name) %>%
-  summarize(n = n()) %>%
-  filter(n == 2) %>% # filter on genes covered by both tissues
+  summarize(n_tissues = n()) %>%
+  filter(n_tissues == 2) %>% # filter on genes covered by both tissues
   # join back
   inner_join(methylationData.3.QC.mRNA.filtered.1, by = "Name") -> methylationData.3.QC.mRNA.filtered.2
 # Reduces further to 12852 genes
+
+
+# split dataframe to effectively 
+methylationData.3.QC.mRNA.filtered.2.split <- split(methylationData.3.QC.mRNA.filtered.2, methylationData.3.QC.mRNA.filtered.2$Name)
 
 # Perform test to determine significantly differentially methylated TEs
 # loop over gene
 dist.list.gene.tissue = list() # create the empty list to store data
 n <- 0
-for(gene in unique(methylationData.3.QC.mRNA.filtered.2$Name)){
+for(gene in unique(names(methylationData.3.QC.mRNA.filtered.2.split))){
   print(paste(gene, n, sep = "___"))
   n <- n + 1
   gene_methylation_info = list() # create a list to store the results per gene
-    methylationData.3.QC.mRNA.filtered.2 %>%
-      filter(Name == gene) %>%
+    methylationData.3.QC.mRNA.filtered.2.split[[gene]] %>%
       select(Sample, Tissue, start, percent) -> mat
     model <- lmer(percent ~ Tissue + (1 | start), mat) # consider including a random effect of replicate (+ (1 | replicate2))
       pval <- anova(model)$`Pr(>F)`[1]
@@ -613,7 +616,6 @@ for(gene in unique(methylationData.3.QC.mRNA.filtered.2$Name)){
     dist.list.gene.tissue[[gene]] = gene_methylation_info
 }
 
-# TO DO: Write significant change in methylation to table
 # Extract pvalues 
 gene_pvalues_methylation = list()
 for(gene in methylationData.3.QC.mRNA.filtered.2$Name){
@@ -627,7 +629,7 @@ for(gene in methylationData.3.QC.mRNA.filtered.2$Name){
 bind_rows(gene_pvalues_methylation) %>%
   mutate(adj_pvalue = p.adjust(pvalue, method = "BH")) %>%
   mutate(significant = "No") %>%
-  mutate(significant = replace(significant, adj_pvalue < (0.01), "Yes")) -> lmm_results.gene.methylation
+  mutate(significant = replace(significant, adj_pvalue < (0.05), "Yes")) -> lmm_results.gene.methylation
 
 # merge the p values back
 table_S4 %>%
