@@ -558,17 +558,19 @@ ggsave(here("figures", "Figure5", "Fig5A.pdf"), Figure5A, width=8, height=5)
 
 # Create supplementary table with methylation and expression data
 ```{r}
+count <- dplyr::count
 
 # reformat methylation_data for the sample
 methylation_wide <- methylationData.3.QC.mRNA.Name.Tissue.summary %>%
   mutate(fraction = percent / 100) %>%
   select(Name, Tissue, fraction) %>%
   pivot_wider(names_from = Tissue, values_from = fraction, names_prefix = "methylation_") %>%
-  mutate(change_methylation = methylation_stipe - methylation_lamella)
+  mutate(change_methylation = methylation_stipe - methylation_lamella) # Note. same as Log2fc. Negative values indicate higher methylation in lamellae. 
 
 # join with rest
 table_S4 <- res.df.all %>%
-  left_join(methylation_wide, by = "Name")
+  left_join(methylation_wide, by = "Name") %>%
+  rename(pvalue = "pvalue_expression", padj = "padj_expression")
 
 # Filter methylation dataframe to only include properly covered genes
 # Take only points where the gene is covered by 10. We start with 13191 genes
@@ -618,7 +620,7 @@ for(gene in unique(names(methylationData.3.QC.mRNA.filtered.2.split))){
 
 # Extract pvalues 
 gene_pvalues_methylation = list()
-for(gene in methylationData.3.QC.mRNA.filtered.2$Name){
+for(gene in unique(names(methylationData.3.QC.mRNA.filtered.2.split))){
   data.frame(
     pvalue = dist.list.gene.tissue[[gene]][["pvalue"]],
     gene_name = dist.list.gene.tissue[[gene]][["Name"]]
@@ -628,12 +630,34 @@ for(gene in methylationData.3.QC.mRNA.filtered.2$Name){
 # adjust pvalues and set significance
 bind_rows(gene_pvalues_methylation) %>%
   mutate(adj_pvalue = p.adjust(pvalue, method = "BH")) %>%
-  mutate(significant = "No") %>%
-  mutate(significant = replace(significant, adj_pvalue < (0.05), "Yes")) -> lmm_results.gene.methylation
+  mutate(differentially_methylated = "No") %>%
+  mutate(differentially_methylated = replace(differentially_methylated, adj_pvalue < (0.05), "Yes")) %>%
+  rename(pvalue = "pvalue_methylation", adj_pvalue = "padj_methylation") -> lmm_results.gene.methylation
 
 # merge the p values back
 table_S4 %>%
-  left_join(lmm_results.gene.methylation, by = c("Name" = "gene_name")) -> Table_S4
+  full_join(lmm_results.gene.methylation, by = c("Name" = "gene_name")) -> table_S4
 
 write.xlsx(table_S4, here("results", "RNA", "Supplementary_table_4_Gene_expression.xlsx"))
+
+# test correlation only on DEGs, otherwise small changes my expand 
+DEG_table <- table_S4 
+# test correlation of methylation and expression
+cor.test(DEG_table$log2FoldChange, DEG_table$change_methylation, methylation = "spearman", use = "complete.obs")
+
+#calculate for upregulated in stipe / lamellae.
+DEG_table %>%
+  filter(log2FoldChange < 0) -> DEG_table_up_lamella
+
+DEG_table %>%
+  filter(log2FoldChange > 0) -> DEG_table_up_stipe
+
+cor.test(DEG_table_up_lamella$log2FoldChange, DEG_table_up_lamella$change_methylation, methylation = "spearman", use = "complete.obs")
+
+cor.test(DEG_table_up_stipe$log2FoldChange, DEG_table_up_stipe$change_methylation, methylation = "spearman", use = "complete.obs")
+
+
+# plot the relationships
+table_S4 %>% ggplot(aes(x = change_methylation, y = log2FoldChange, colour = DE)) +
+  geom_point()
 ```
