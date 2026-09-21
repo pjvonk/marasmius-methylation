@@ -646,7 +646,7 @@ DEG_table <- table_S4
 cor.test(DEG_table$log2FoldChange, DEG_table$change_methylation, methylation = "spearman", use = "complete.obs")
 
 #calculate for upregulated in stipe / lamellae.
-DEG_table %>%
+DEG_table %>% # note: consider filtering on DEGS
   filter(log2FoldChange < 0) -> DEG_table_up_lamella
 
 DEG_table %>%
