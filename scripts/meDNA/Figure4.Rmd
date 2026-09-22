@@ -1,5 +1,5 @@
 ---
-title: "Methylation pattern"
+title: "TE expression"
 output:
  html_document:
     toc: true
@@ -37,6 +37,8 @@ library(DESeq2)
 
 # Set correct select function
 select = dplyr::select
+count = dplyr::count
+rename = dplyr::rename
 
 # Define tissue colors
 types = c("Stipe","Lamella","Spore","control")
@@ -92,6 +94,60 @@ samples.ring.RNA.df %>%
 
 
 samples.ring.RNA.df
+
+```
+
+# TE reference
+```{r, message=FALSE}
+# Define GFF3 columns
+gff3Colnames =c("seqid", "source",
+                "type","start",
+                "end", "score",
+                "strand","phase",
+                "attributes")
+
+  # Load information about TE classes, included in repository
+  TE.classes = read_csv(file = here("annotation", "Repeat.classes.csv")) %>%
+    dplyr::rename("Notes" = "Superfamily / Notes") #columns renamed for downstream use
+
+  # Define TE file location, included in repository
+  TEFile <- here("annotation","Maror2.repeatmasker.rmlib2.3.gff")
+
+  # Read in TE dataframe from gff file
+  TEdf <- read_tsv(file = TEFile, col_names = gff3Colnames,comment = "#") %>% separate(attributes, into = c("ID","target"), sep = ";") %>%
+    mutate(ID = as.numeric(gsub("ID=","",ID))) %>%
+    separate(target, into = c("Target","motif",
+                              "motifStart","motifStop"),
+             sep = " ") %>%
+    mutate(motif = gsub("\"","",motif))%>%
+    mutate(motif = gsub("Motif:","",motif))  %>%
+    select(seqid,start,end,score,
+           strand, ID,motif,
+           motifStart,motifStop) %>%
+    rename(ID = "TEID") %>%
+    mutate(TE_ID2 = 1:n()) %>%
+    mutate(motifStart = as.numeric(gsub(" ","",motifStart))) %>%
+    mutate(motifStop = as.numeric(gsub(" ","",motifStop))) %>%
+    dplyr::rename(TEclass = "motif") %>%
+    mutate(TEclass = gsub(" ","",TEclass)) %>%
+    mutate(TEclass = gsub("Maror","",TEclass)) 
+
+ 
+  # Generate GRanges of TE file
+  TEs = makeGRangesFromDataFrame(TEdf,
+                                 seqnames.field = "seqid", 
+                                 start.field = "start", 
+                                 end.field = "end",
+                                 strand.field = "strand",
+                                 keep.extra.columns = TRUE)
+  
+
+# Merge TE classes with dataframe to add annotation and remove other repeat annotations
+# From 13309 to 8893 repeats
+TEdf%>%
+  separate(TEclass, into = c("TEfamily","nr"), sep = "-",remove = FALSE) %>%
+  inner_join(TE.classes)->
+  TEdf
 
 ```
 
@@ -418,3 +474,18 @@ ggsave(here("figures", "Figure4", "Fig4D.pdf"), scatter_meth_tpm, width = 6, hei
 
 ```
 
+# Supplementary table 3
+```{r}
+tpm_file <- here("data", "RNA", "repeats", "salmon", "salmon.merged.gene_tpm.tsv")
+
+tpms <- read.csv(tpm_file, sep = "\t")
+
+tpms_annotated <- tpms %>% 
+  mutate(Name = sub("-.*", "", gene_id)) %>%
+  mutate(Name = sub("Maror", "", Name)) %>%
+  left_join(TE.classes, by = "Name") %>%
+  relocate(Name, Class, Order, Notes, .after = gene_id) %>%
+  select(-gene_name)
+
+write.xlsx(tpms_annotated, here("results", "RNA", "Supplementary_table_3_TPM_TEs.xlsx"))
+```
