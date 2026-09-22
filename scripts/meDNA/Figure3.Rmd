@@ -691,6 +691,6 @@ names(methylationData.3.QC.TE.wide.TEID)[names(methylationData.3.QC.TE.wide.TEID
 publication_table <- merge(publication_table, methylationData.3.QC.TE.wide.TEID, by="TE_ID2")
 
 #Export to excel
-write.xlsx(publication_table, here("results", "meDNA", "Supplementary_table_meDNA.xlsx"))
+write.xlsx(publication_table, here("results", "meDNA", "supplementary_table_2_meDNA_TEs.xlsx"))
 
 ```
