@@ -238,6 +238,7 @@ ggplot(plot_data, aes(x = PC1, y = PC2, color = Tissue, shape = Location)) +
     title = "PCA of top 50,000 variable CpGs",
     color = "Tissue",
     shape = "Location") +
+    scale_color_manual(values = colors) +
     theme_classic(base_size = 10) + 
     theme(plot.title = element_text(hjust = 0.5, face = "bold")) -> PCA_plot
 
