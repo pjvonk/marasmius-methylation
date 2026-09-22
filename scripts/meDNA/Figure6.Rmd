@@ -231,15 +231,17 @@ pc2_lab <- paste0("PC2 (", round(var_explained[2], 1), "% variance)")
 plot_data <- left_join(meta, pca_scores, by = "Sample")
 
 ggplot(plot_data, aes(x = PC1, y = PC2, color = Tissue, shape = Location)) +
-  geom_point(size = 3.5, alpha = 0.85) +
+  geom_point(size = 3, alpha = 0.85) +
   labs(
     x = pc1_lab,
     y = pc2_lab,
     title = "PCA of top 50,000 variable CpGs",
     color = "Tissue",
     shape = "Location") +
-    theme_classic() + 
-    theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+    theme_classic(base_size = 10) + 
+    theme(plot.title = element_text(hjust = 0.5, face = "bold")) -> PCA_plot
+
+ggsave(here("figures", "Figure6", "Fig6A.pdf"), width = 6, height = 5, PCA_plot)
 
 
 # distribution of types of sites in the selected CpGs
@@ -315,16 +317,15 @@ ggplot(top_CpG_df, aes(x = stipe_spore_difference, y = PC2)) + geom_point()
 methylationData.3.QC %>%
   mutate(individual = paste(Location, Replicate2, sep = "_")) %>%
   mutate(cpg_id = paste(seqid, start, sep = ":")) %>%
-  mutate(meth_reads = as.integer(depth * percent / 100)) %>%
-  mutate(unmeth_reads = as.integer(depth - meth_reads)) %>%
-  select(Sample, cpg_id, percent, meth_reads, unmeth_reads, Location, Tissue, Replicate2, individual, location) %>%
+  select(Sample, cpg_id, percent, Location, Tissue, Replicate2, individual, location) %>%
   split(.$Sample) -> sample_data_list
 
 percentage_same_methylation <- function(
     sample_1,
     sample_2,
     data_list = sample_data_list,
-    max_absolute_difference = 15) {
+    max_absolute_difference = 10.1,
+    group_by_location = FALSE) {
     
     # transform the data into a usable comparison
     data_sample_1 <- data_list[[sample_1]]
@@ -334,21 +335,25 @@ percentage_same_methylation <- function(
     #calculate percent similarity 
     data_sample_1 %>%
       inner_join(data_sample_2, by = "cpg_id", suffix = c("_1", "_2")) %>%
-      filter(!is.na(percent_1) & !is.na(percent_2)) %>% 
-      group_by(location_1) %>%
-      summarize(
-        individual_1 = individual_1[1],
-        individual_2 = individual_2[1],
-        same_individual = individual_1[1] == individual_2[1],
-        same_location = Location_1[1] == Location_2[1],
-        tissue_1 = Tissue_1[1],
-        tissue_2 = Tissue_2[1],
-        total_shared_sites = n(),
-        mean_difference = mean(abs(percent_1 - percent_2)),
-        sites_within_pct = sum(abs(percent_1 - percent_2) <= max_absolute_difference),
-        pct_overlap = (sites_within_pct / total_shared_sites),
-        pearson = cor(percent_1, percent_2, method = "pearson", use = "complete.obs"),
-        spearman = cor(percent_1, percent_2, method = "spearman", use = "complete.obs")) -> result
+      filter(!is.na(percent_1) & !is.na(percent_2)) -> joined_data
+
+    if(group_by_location){
+      joined_data <- joined_data %>% group_by(location_1)
+    } 
+    result <- joined_data %>% summarize(
+      individual_1 = individual_1[1],
+      individual_2 = individual_2[1],
+      same_individual = individual_1[1] == individual_2[1],
+      same_location = Location_1[1] == Location_2[1],
+      tissue_1 = Tissue_1[1],
+      tissue_2 = Tissue_2[1],
+      total_shared_sites = n(),
+      mean_difference = mean(abs(percent_1 - percent_2)),
+      sites_within_pct = sum(abs(percent_1 - percent_2) <= max_absolute_difference),
+      pct_overlap = (sites_within_pct / total_shared_sites),
+      pearson = cor(percent_1, percent_2, method = "pearson", use = "complete.obs"),
+      spearman = cor(percent_1, percent_2, method = "spearman", use = "complete.obs"),
+      .groups = "drop")
     return(result)
 }
 
@@ -373,14 +378,63 @@ pairs %>%
   pull(results) %>%
   list_rbind() -> all_results
 
-ggplot(all_results, aes(x = tissue_2, y = pct_overlap, fill = same_individual)) +
-  geom_boxplot(outlier.shape = NA, alpha = 0.6, position = position_dodge(0.8)) +
-  geom_point(aes(color = same_individual), position = position_jitterdodge(jitter.width = 0.15, dodge.width = 0.8), size = 2, alpha = 0.8) +
-  stat_compare_means(aes(group = same_individual), method = "wilcox.test", label = "p.format", label.y = max(all_results$pct_overlap, na.rm = TRUE) + 0.02, hide.ns = FALSE) +
-  facet_wrap(~ location_1) +
-  labs(x = "Lamellae vs", y = "Percentage overlap within 15%") +
-  theme_classic(base_size = 12) -> overlap_boxplot
 
+# Run version where methylation maintenance is calculated by category
+pairs %>%
+  mutate(results = pmap(list(Sample_1, Sample_2), percentage_same_methylation, group_by_location = TRUE, .progress = TRUE)) %>%
+  pull(results) %>%
+  list_rbind() -> all_results_grouped_location
+
+# plot the overlap
+all_results %>%
+  filter(same_location == TRUE) %>%
+  mutate(same_individual = factor(same_individual, levels = c(TRUE, FALSE))) %>%
+  mutate(same_location = factor(same_location, levels = c(TRUE, FALSE))) %>%
+  ggplot(aes(x = tissue_2, y = pct_overlap, fill = same_individual)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6, position = position_dodge(0.8)) +
+  geom_point(aes(shape = same_location, group = same_individual), color = "grey30", position = position_jitterdodge(jitter.width = 0.35, dodge.width = 0.8), size = 2, alpha = 2) +
+  stat_compare_means(aes(group = same_individual), method = "wilcox.test", label = "p.format", label.y = max(all_results$pct_overlap, na.rm = TRUE) + 0.02, hide.ns = FALSE, size = 4) +
+  labs(x = "", y = "Fraction overlap within 10%") +
+  scale_x_discrete(labels = c("spore" = "Lamella vs spore", "stipe" = "Lamella vs stipe")) +
+  scale_shape_discrete(name = "Location", labels = c("TRUE" = "Same location", "FALSE" = "Different location")) +
+  scale_fill_discrete(name = "Individual", labels = c("TRUE" = "Same individual", "FALSE" = "Different individual")) +
+  theme_classic(base_size = 14) -> overlap_boxplot_no_different_location
+
+# plot overlap without different locations
+all_results %>%
+  filter(same_location == TRUE) %>%
+  mutate(same_individual = factor(same_individual, levels = c(TRUE, FALSE))) %>%
+  mutate(same_location = factor(same_location, levels = c(TRUE, FALSE))) %>%
+  ggplot(aes(x = tissue_2, y = pct_overlap, fill = same_individual)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6, position = position_dodge(0.8)) +
+  geom_point(aes(shape = same_location, group = same_individual), color = "grey30", position = position_jitterdodge(jitter.width = 0.35, dodge.width = 0.8), size = 2, alpha = 2) +
+  stat_compare_means(aes(group = same_individual), method = "wilcox.test", label = "p.format", label.y = max(all_results$pct_overlap, na.rm = TRUE) + 0.02, hide.ns = FALSE, size = 4) +
+  labs(x = "", y = "Fraction overlap within 10%") +
+  scale_x_discrete(labels = c("spore" = "Lamella vs spore", "stipe" = "Lamella vs stipe")) +
+  scale_shape_discrete(name = "Location", labels = c("TRUE" = "Same location", "FALSE" = "Different location")) +
+  scale_fill_discrete(name = "Individual", labels = c("TRUE" = "Same individual", "FALSE" = "Different individual")) +
+  theme_classic(base_size = 14) -> overlap_boxplot_no_different_location
+
+ggsave(here("figures", "Figure6", "Fig6B.pdf"), width = 7, height = 5, overlap_boxplot)
+ggsave(here("figures", "SuppFigures", "supplemental_figure_4A.pdf"), width = 7, height = 5, overlap_boxplot_no_different_location)
+
+all_results_grouped_location %>%
+  mutate(same_individual = factor(same_individual, levels = c(TRUE, FALSE))) %>%
+  mutate(same_location = factor(same_location, levels = c(TRUE, FALSE))) %>%
+  ggplot(aes(x = tissue_2, y = pct_overlap, fill = same_individual)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6, position = position_dodge(0.8)) +
+  geom_point(aes(shape = same_location, group = same_individual), color = "grey30", position = position_jitterdodge(jitter.width = 0.35, dodge.width = 0.8), size = 2, alpha = 2) +
+  stat_compare_means(aes(group = same_individual), method = "wilcox.test", label = "p.format", label.y = max(all_results$pct_overlap, na.rm = TRUE) + 0.02, hide.ns = FALSE, size = 3.5) +
+  facet_wrap(~ location_1) +
+  labs(x = "", y = "Fraction overlap within 10%") +
+  scale_x_discrete(labels = c("spore" = "Lamella\nvs spore", "stipe" = "Lamella\nvs stipe")) +
+  scale_shape_discrete(name = "Location", labels = c("TRUE" = "Same location", "FALSE" = "Different location")) +
+  scale_fill_discrete(name = "Individual", labels = c("TRUE" = "Same individual", "FALSE" = "Different individual")) + 
+  theme_classic(base_size = 14) -> overlap_boxplot_grouped
+
+ggsave(here("figures", "SuppFigures", "supplemental_figure_4B.pdf"), width = 12, height = 5, overlap_boxplot_grouped)
+
+#unused plots
 ggplot(all_results, aes(x = tissue_2, y = mean_difference, fill = same_individual)) +
   geom_boxplot(outlier.shape = NA, alpha = 0.6, position = position_dodge(0.8)) +
   geom_point(aes(color = same_individual), position = position_jitterdodge(jitter.width = 0.15, dodge.width = 0.8), size = 2, alpha = 0.8) +
@@ -389,7 +443,7 @@ ggplot(all_results, aes(x = tissue_2, y = mean_difference, fill = same_individua
   labs(x = "Lamellae vs", y = "Mean difference per position", title = "Mean difference in CpG methylation within and between mushrooms per genomic context") +
   theme_classic(base_size = 12) -> mean_difference_boxplot
 
-#ggsave(here("figures", "Figure1", "overlap_boxplot_5percent_no_0_100.png"), overlap_boxplot)
+
 
 #plotting spearman and pearson
 
