@@ -199,7 +199,7 @@ Loading it from the google drive. This might change when we publish
 ```{r, message=FALSE}
 
 #TODO: Insert DOI
-# Data can be obtained from ###INSERT DOI#####
+# Data can be obtained from 10.5281/zenodo.22670556
 meData_path <- here("data", "meDNA", "methylationData.samples.QC.csv.gz")
 
 # Read in the data, read_csv automatically handles the decompression

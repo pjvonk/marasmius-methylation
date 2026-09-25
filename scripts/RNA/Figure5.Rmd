@@ -487,6 +487,7 @@ ggsave(here("figures", "SuppFigures", "supplemental_figure_3_RNA_abundance.pdf")
   
   
 ###Added to define required variable
+# Methylation data can be obtained here: 10.5281/zenodo.22670556
 meData_path <- here("data", "meDNA", "methylationData.samples.QC.csv.gz")
 
 # 3. Read it - read_csv automatically handles the decompression

@@ -422,7 +422,7 @@ quantile(avg$avg_tpm, probs = c(0.25, 0.5, 0.75))
 ```{r}
 
 # Load methylation data
-# Data can be obtained from ###INSERT DOI#####
+# Data can be obtained from 10.5281/zenodo.22670556
 meData_path <- here("data", "meDNA", "methylationData.samples.QC.csv.gz")
 
 # Read in the data, read_csv automatically handles the decompression
